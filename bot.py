@@ -112,8 +112,11 @@ def status_embed(name, char):
 # ── SINCRONIZAR ──
 @bot.event
 async def on_ready():
-    await tree.sync()
-    print(f"Bot online: {bot.user}")
+    try:
+        synced = await tree.sync()
+        print(f"Bot online: {bot.user} | Comandos sincronizados: {len(synced)}")
+    except Exception as e:
+        print(f"Erro ao sincronizar comandos: {e}")
 
 # Comando para forçar sync no servidor (use uma vez após atualizar)
 @tree.command(name="sync", description="[ADMIN] Força sincronização dos comandos neste servidor")
