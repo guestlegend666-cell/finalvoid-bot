@@ -26,18 +26,37 @@ def save(data):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 def get_char(data, name):
-    key = name.lower()
     for k in data:
-        if k.lower() == key:
+        if k.lower() == name.lower():
             return data[k]
     return None
 
 def get_key(data, name):
-    key = name.lower()
     for k in data:
-        if k.lower() == key:
+        if k.lower() == name.lower():
             return k
     return None
+
+# ── EVASIVAS: calcula bonus pela diferença de velocidade ──
+def calcular_evasivas(vel_propria, vel_oponente):
+    diff = vel_propria - vel_oponente
+    base = 5
+    if diff <= 0:
+        return base
+    elif diff <= 1:
+        return base          # empate prático
+    elif diff <= 3:
+        return base + 2      # +2
+    elif diff <= 5:
+        return base + 4      # +4
+    else:
+        return base + 5      # +5
+
+def evasivas_penalidade(vel_propria, vel_oponente):
+    diff = vel_oponente - vel_propria
+    if diff >= 6:
+        return 3             # cai pra 3
+    return 5                 # mantém base
 
 # ── EMBED DE STATUS ──
 def status_embed(name, char):
@@ -51,25 +70,31 @@ def status_embed(name, char):
     hp_pct = int((hp / hp_max * 100)) if hp_max > 0 else 0
     en_pct = int((en / en_max * 100)) if en_max > 0 else 0
 
+    vel = char.get("velocidade", 0)
+    evasivas = char.get("evasivas", 5)
+
     def barra(pct):
         filled = int(pct / 10)
         return "█" * filled + "░" * (10 - filled) + f" {pct}%"
 
+    def barra_evasivas(atual, maximo=10):
+        filled = atual
+        return "◆" * filled + "◇" * (maximo - filled) + f" {atual}"
+
     embed = discord.Embed(title=f"◈ {name}", color=cor)
     embed.add_field(name="Estado", value=f"`{estado}`", inline=True)
-    embed.add_field(name="Reiatsu", value=f"`{char.get('reiatsu', '—')}`", inline=True)
-    embed.add_field(name="Velocidade", value=f"`{char.get('velocidade', '—')}%`", inline=True)
+    embed.add_field(name="Reiatsu", value=f"`{char.get('reiatsu', '—'):,}`", inline=True)
+    embed.add_field(name="Velocidade", value=f"`{vel}/10`", inline=True)
     embed.add_field(name=f"HP [{hp:,} / {hp_max:,}]", value=barra(hp_pct), inline=False)
     embed.add_field(name=f"Energia Amaldiçoada [{en:,} / {en_max:,}]", value=barra(en_pct), inline=False)
     embed.add_field(name="LBA", value=f"`{char.get('lba', '—'):,}`", inline=True)
+    embed.add_field(name="Evasivas", value=barra_evasivas(evasivas), inline=True)
 
-    # Stats especiais
     extras = char.get("extras", {})
     if extras:
         for k, v in extras.items():
             embed.add_field(name=k, value=f"`{v}`", inline=True)
 
-    # Alertas
     alertas = []
     if hp_pct <= 20:
         alertas.append("⚠️ HP CRÍTICO")
@@ -77,6 +102,8 @@ def status_embed(name, char):
         alertas.append("⚠️ ENERGIA CRÍTICA — IMINENTE INATIVO")
     if en <= 0:
         alertas.append("☠️ ENERGIA ZERADA — PERSONAGEM INATIVO")
+    if evasivas == 0:
+        alertas.append("💨 SEM EVASIVAS — RECUPERE COM TÉCNICA DE VELOCIDADE")
     if alertas:
         embed.add_field(name="ALERTAS", value="\n".join(alertas), inline=False)
 
@@ -98,11 +125,11 @@ async def on_ready():
     nome="Nome do personagem",
     hp="HP máximo",
     energia="Energia amaldiçoada máxima",
-    reiatsu="Reiatsu (fixo, não muda em combate)",
+    reiatsu="Reiatsu (fixo, não muda em combate) — de 10.000 a 100.000",
     lba="LBA base",
-    velocidade="Velocidade em % (ex: 80)"
+    velocidade="Velocidade de 1 a 10"
 )
-async def registrar(interaction, nome: str, hp: int, energia: int, reiatsu: int, lba: int, velocidade: int):
+async def registrar(interaction, nome: str, hp: int, energia: int, reiatsu: int, lba: int, velocidade: app_commands.Range[int, 1, 10]):
     data = load()
     data[nome] = {
         "hp": hp, "hp_max": hp,
@@ -110,6 +137,7 @@ async def registrar(interaction, nome: str, hp: int, energia: int, reiatsu: int,
         "reiatsu": reiatsu,
         "lba": lba, "lba_base": lba,
         "velocidade": velocidade, "velocidade_base": velocidade,
+        "evasivas": 5,
         "estado": "Base",
         "transformacoes": {},
         "extras": {}
@@ -124,7 +152,7 @@ async def status(interaction, nome: str):
     data = load()
     char = get_char(data, nome)
     if not char:
-        await interaction.response.send_message(f"❌ Personagem **{nome}** não encontrado.", ephemeral=True)
+        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
         return
     await interaction.response.send_message(embed=status_embed(nome, char))
 
@@ -216,9 +244,9 @@ async def recuperar(interaction, nome: str, valor: int):
     )
 
 # /velocidade
-@tree.command(name="velocidade", description="Altera a velocidade de um personagem")
-@app_commands.describe(nome="Nome do personagem", valor="Nova velocidade em %")
-async def velocidade(interaction, nome: str, valor: int):
+@tree.command(name="velocidade", description="Altera a velocidade de um personagem (escala 1-10)")
+@app_commands.describe(nome="Nome do personagem", valor="Nova velocidade de 1 a 10")
+async def velocidade(interaction, nome: str, valor: app_commands.Range[int, 1, 10]):
     data = load()
     key = get_key(data, nome)
     if not key:
@@ -227,9 +255,114 @@ async def velocidade(interaction, nome: str, valor: int):
     data[key]["velocidade"] = valor
     save(data)
     await interaction.response.send_message(
-        f"💨 **{key}** velocidade → `{valor}%`",
+        f"💨 **{key}** velocidade → `{valor}/10`",
         embed=status_embed(key, data[key])
     )
+
+# /evasiva_usar
+@tree.command(name="evasiva_usar", description="Registra o uso de evasivas em um desvio")
+@app_commands.describe(
+    nome="Nome do personagem",
+    quantidade="Quantas evasivas foram gastas"
+)
+async def evasiva_usar(interaction, nome: str, quantidade: app_commands.Range[int, 1, 10]):
+    data = load()
+    key = get_key(data, nome)
+    if not key:
+        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
+        return
+    char = data[key]
+    antes = char.get("evasivas", 5)
+    if antes <= 0:
+        await interaction.response.send_message(
+            f"❌ **{key}** não tem evasivas restantes. Use `/evasiva_recuperar` com sua técnica de velocidade.",
+            ephemeral=True
+        )
+        return
+    char["evasivas"] = max(0, antes - quantidade)
+    save(data)
+    msg = f"💨 **{key}** usou `{quantidade}` evasiva(s).\n`Evasivas: {antes} → {char['evasivas']}`"
+    if char["evasivas"] == 0:
+        msg += "\n💨 **SEM EVASIVAS — RECUPERE COM TÉCNICA DE VELOCIDADE**"
+    await interaction.response.send_message(msg, embed=status_embed(key, char))
+
+# /evasiva_recuperar
+@tree.command(name="evasiva_recuperar", description="Recupera as evasivas de um personagem (após zerar, via técnica de velocidade)")
+@app_commands.describe(
+    nome="Nome do personagem",
+    oponente="Nome do oponente (para calcular bônus de velocidade). Deixe em branco para restaurar apenas as 5 base."
+)
+async def evasiva_recuperar(interaction, nome: str, oponente: str = ""):
+    data = load()
+    key = get_key(data, nome)
+    if not key:
+        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
+        return
+    char = data[key]
+    vel_propria = char.get("velocidade", 5)
+
+    if oponente:
+        op_key = get_key(data, oponente)
+        if not op_key:
+            await interaction.response.send_message(f"❌ Oponente **{oponente}** não encontrado.", ephemeral=True)
+            return
+        vel_op = data[op_key].get("velocidade", 5)
+        novas = calcular_evasivas(vel_propria, vel_op)
+        diff = abs(vel_propria - vel_op)
+        info = f"Velocidade `{vel_propria}` vs `{vel_op}` — diferença de `{diff}`"
+    else:
+        novas = 5
+        info = "Restaurado para o padrão base (5)"
+
+    char["evasivas"] = novas
+    save(data)
+    await interaction.response.send_message(
+        f"💨 **{key}** recuperou evasivas.\n{info}\n`Evasivas: {novas}`",
+        embed=status_embed(key, char)
+    )
+
+# /comparar_velocidade
+@tree.command(name="comparar_velocidade", description="Mostra a diferença de velocidade e evasivas entre dois personagens")
+@app_commands.describe(
+    nome1="Primeiro personagem",
+    nome2="Segundo personagem"
+)
+async def comparar_velocidade(interaction, nome1: str, nome2: str):
+    data = load()
+    k1 = get_key(data, nome1)
+    k2 = get_key(data, nome2)
+    if not k1 or not k2:
+        await interaction.response.send_message("❌ Um dos personagens não foi encontrado.", ephemeral=True)
+        return
+
+    v1 = data[k1].get("velocidade", 5)
+    v2 = data[k2].get("velocidade", 5)
+    diff = abs(v1 - v2)
+
+    ev1 = calcular_evasivas(v1, v2) if v1 >= v2 else evasivas_penalidade(v1, v2)
+    ev2 = calcular_evasivas(v2, v1) if v2 >= v1 else evasivas_penalidade(v2, v1)
+
+    embed = discord.Embed(title="💨 COMPARAÇÃO DE VELOCIDADE", color=0x4a7fff)
+    embed.add_field(name=k1, value=f"Velocidade: `{v1}/10`\nEvasivas ao recuperar: `{ev1}`", inline=True)
+    embed.add_field(name=k2, value=f"Velocidade: `{v2}/10`\nEvasivas ao recuperar: `{ev2}`", inline=True)
+    embed.add_field(name="Diferença", value=f"`{diff}` ponto(s)", inline=False)
+
+    if diff == 0:
+        embed.add_field(name="Resultado", value="Empate — ambos com 5 evasivas base.", inline=False)
+    elif diff <= 1:
+        embed.add_field(name="Resultado", value="Empate prático. Sem vantagem real de evasiva.", inline=False)
+    elif diff <= 3:
+        mais_rapido = k1 if v1 > v2 else k2
+        embed.add_field(name="Resultado", value=f"**{mais_rapido}** tem vantagem leve (+2 evasivas).", inline=False)
+    elif diff <= 5:
+        mais_rapido = k1 if v1 > v2 else k2
+        embed.add_field(name="Resultado", value=f"**{mais_rapido}** tem vantagem clara (+4 evasivas).", inline=False)
+    else:
+        mais_rapido = k1 if v1 > v2 else k2
+        mais_lento = k2 if v1 > v2 else k1
+        embed.add_field(name="Resultado", value=f"**{mais_rapido}** domina em velocidade (+5 evasivas). **{mais_lento}** cai para 3 evasivas.", inline=False)
+
+    await interaction.response.send_message(embed=embed)
 
 # /lba
 @tree.command(name="lba", description="Altera o LBA de um personagem")
@@ -255,9 +388,9 @@ async def lba(interaction, nome: str, valor: int):
     hp_mult="Multiplicador de HP (ex: 1.5 = +50%). Use 1 pra não mudar.",
     energia_mult="Multiplicador de Energia. Use 1 pra não mudar.",
     lba_mult="Multiplicador de LBA. Use 1 pra não mudar.",
-    vel_mult="Multiplicador de Velocidade. Use 1 pra não mudar."
+    vel_add="Pontos de velocidade a adicionar (ex: 1 = +1 no número). Use 0 pra não mudar."
 )
-async def registrar_transformacao(interaction, nome: str, estado: str, hp_mult: float, energia_mult: float, lba_mult: float, vel_mult: float):
+async def registrar_transformacao(interaction, nome: str, estado: str, hp_mult: float, energia_mult: float, lba_mult: float, vel_add: int = 0):
     data = load()
     key = get_key(data, nome)
     if not key:
@@ -270,12 +403,12 @@ async def registrar_transformacao(interaction, nome: str, estado: str, hp_mult: 
         "hp_mult": hp_mult,
         "energia_mult": energia_mult,
         "lba_mult": lba_mult,
-        "vel_mult": vel_mult
+        "vel_add": vel_add
     }
     save(data)
     await interaction.response.send_message(
         f"✅ Transformação **{estado}** registrada para **{key}**.\n"
-        f"HP ×`{hp_mult}` | Energia ×`{energia_mult}` | LBA ×`{lba_mult}` | Vel ×`{vel_mult}`"
+        f"HP ×`{hp_mult}` | Energia ×`{energia_mult}` | LBA ×`{lba_mult}` | Vel +`{vel_add}`"
     )
 
 # /transformar
@@ -313,13 +446,12 @@ async def transformar(interaction, nome: str, estado: str):
         )
         return
 
-    # Aplica multiplicadores nos stats ATUAIS
     char["hp"] = int(char["hp"] * t["hp_mult"])
     char["hp_max"] = int(char["hp_max"] * t["hp_mult"])
     char["energia"] = int(char["energia"] * t["energia_mult"])
     char["energia_max"] = int(char["energia_max"] * t["energia_mult"])
     char["lba"] = int(char["lba"] * t["lba_mult"])
-    char["velocidade"] = min(100, int(char["velocidade"] * t["vel_mult"]))
+    char["velocidade"] = min(10, char["velocidade"] + t.get("vel_add", 0))
     char["estado"] = t["nome"]
 
     save(data)
@@ -364,6 +496,7 @@ async def resetar(interaction, nome: str):
     char["energia"] = char["energia_max"]
     char["lba"] = char.get("lba_base", char["lba"])
     char["velocidade"] = char.get("velocidade_base", char["velocidade"])
+    char["evasivas"] = 5
     char["estado"] = "Base"
     save(data)
     await interaction.response.send_message(
@@ -392,7 +525,7 @@ async def ajuda(interaction):
         "`/registrar` — cria personagem com stats base\n"
         "`/status [nome]` — mostra status atual\n"
         "`/todos` — mostra todos os personagens\n"
-        "`/resetar [nome]` — reseta para o máximo\n"
+        "`/resetar [nome]` — reseta HP, energia, evasivas e velocidade\n"
         "`/deletar [nome]` — remove personagem",
         inline=False)
     embed.add_field(name="⚔️ COMBATE", value=
@@ -400,11 +533,17 @@ async def ajuda(interaction):
         "`/curar [nome] [valor]` — cura HP\n"
         "`/gastar [nome] [valor]` — gasta energia amaldiçoada\n"
         "`/recuperar [nome] [valor]` — recupera energia\n"
-        "`/velocidade [nome] [%]` — altera velocidade\n"
+        "`/velocidade [nome] [1-10]` — altera velocidade\n"
         "`/lba [nome] [valor]` — altera LBA",
         inline=False)
+    embed.add_field(name="💨 EVASIVAS", value=
+        "`/evasiva_usar [nome] [qtd]` — registra evasivas gastas\n"
+        "`/evasiva_recuperar [nome]` — recupera evasivas base (5)\n"
+        "`/evasiva_recuperar [nome] [oponente]` — recupera com bônus de velocidade\n"
+        "`/comparar_velocidade [nome1] [nome2]` — mostra diferença e evasivas de cada um",
+        inline=False)
     embed.add_field(name="✨ TRANSFORMAÇÕES", value=
-        "`/registrar_transformacao` — cadastra uma transformação com multiplicadores\n"
+        "`/registrar_transformacao` — cadastra transformação com multiplicadores\n"
         "`/transformar [nome] [estado]` — aplica transformação nos stats atuais\n"
         "`/transformar [nome] base` — reverte para base",
         inline=False)
