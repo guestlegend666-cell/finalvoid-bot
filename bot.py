@@ -115,6 +115,20 @@ async def on_ready():
     await tree.sync()
     print(f"Bot online: {bot.user}")
 
+# Comando para forçar sync no servidor (use uma vez após atualizar)
+@tree.command(name="sync", description="[ADMIN] Força sincronização dos comandos neste servidor")
+async def sync_cmd(interaction: discord.Interaction):
+    guild = interaction.guild
+    if guild is None:
+        await interaction.response.send_message("Use dentro de um servidor.", ephemeral=True)
+        return
+    tree.copy_global_to(guild=guild)
+    synced = await tree.sync(guild=guild)
+    await interaction.response.send_message(
+        f"✅ Sincronizados **{len(synced)}** comandos neste servidor.",
+        ephemeral=True
+    )
+
 # ════════════════════════════════
 # COMANDOS
 # ════════════════════════════════
@@ -286,38 +300,20 @@ async def evasiva_usar(interaction, nome: str, quantidade: app_commands.Range[in
         msg += "\n💨 **SEM EVASIVAS — RECUPERE COM TÉCNICA DE VELOCIDADE**"
     await interaction.response.send_message(msg, embed=status_embed(key, char))
 
-# /evasiva_recuperar
-@tree.command(name="evasiva_recuperar", description="Recupera as evasivas de um personagem (após zerar, via técnica de velocidade)")
-@app_commands.describe(
-    nome="Nome do personagem",
-    oponente="Nome do oponente (para calcular bônus de velocidade). Deixe em branco para restaurar apenas as 5 base."
-)
-async def evasiva_recuperar(interaction, nome: str, oponente: str = ""):
+# /evasiva_recuperar — restaura para 5 base
+@tree.command(name="evasiva_recuperar", description="Recupera as evasivas de um personagem para o padrão base (5)")
+@app_commands.describe(nome="Nome do personagem")
+async def evasiva_recuperar(interaction, nome: str):
     data = load()
     key = get_key(data, nome)
     if not key:
         await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
         return
     char = data[key]
-    vel_propria = char.get("velocidade", 5)
-
-    if oponente:
-        op_key = get_key(data, oponente)
-        if not op_key:
-            await interaction.response.send_message(f"❌ Oponente **{oponente}** não encontrado.", ephemeral=True)
-            return
-        vel_op = data[op_key].get("velocidade", 5)
-        novas = calcular_evasivas(vel_propria, vel_op)
-        diff = abs(vel_propria - vel_op)
-        info = f"Velocidade `{vel_propria}` vs `{vel_op}` — diferença de `{diff}`"
-    else:
-        novas = 5
-        info = "Restaurado para o padrão base (5)"
-
-    char["evasivas"] = novas
+    char["evasivas"] = 5
     save(data)
     await interaction.response.send_message(
-        f"💨 **{key}** recuperou evasivas.\n{info}\n`Evasivas: {novas}`",
+        f"💨 **{key}** recuperou evasivas.\nRestaurado para o padrão base (5)\n`Evasivas: 5`",
         embed=status_embed(key, char)
     )
 
@@ -390,7 +386,7 @@ async def lba(interaction, nome: str, valor: int):
     lba_mult="Multiplicador de LBA. Use 1 pra não mudar.",
     vel_add="Pontos de velocidade a adicionar (ex: 1 = +1 no número). Use 0 pra não mudar."
 )
-async def registrar_transformacao(interaction, nome: str, estado: str, hp_mult: float, energia_mult: float, lba_mult: float, vel_add: int = 0):
+async def registrar_transformacao(interaction, nome: str, estado: str, hp_mult: float, energia_mult: float, lba_mult: float, vel_add: int):
     data = load()
     key = get_key(data, nome)
     if not key:
