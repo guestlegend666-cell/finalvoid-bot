@@ -460,6 +460,56 @@ async def transformar(interaction, nome: str, estado: str):
         embed=status_embed(key, char)
     )
 
+# /deletar_transformacao
+@tree.command(name="deletar_transformacao", description="Remove uma transformação registrada de um personagem")
+@app_commands.describe(
+    nome="Nome do personagem",
+    estado="Nome da transformação a deletar (ex: Shikai)"
+)
+async def deletar_transformacao(interaction, nome: str, estado: str):
+    data = load()
+    key = get_key(data, nome)
+    if not key:
+        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
+        return
+    transformacoes = data[key].get("transformacoes", {})
+    t_key = estado.lower()
+    if t_key not in transformacoes:
+        lista = ", ".join([f"`{v['nome']}`" for v in transformacoes.values()]) or "nenhuma"
+        await interaction.response.send_message(
+            f"❌ Transformação **{estado}** não encontrada em **{key}**.\nTransformações registradas: {lista}",
+            ephemeral=True
+        )
+        return
+    nome_real = transformacoes[t_key]["nome"]
+    del data[key]["transformacoes"][t_key]
+    save(data)
+    await interaction.response.send_message(
+        f"🗑️ Transformação **{nome_real}** removida de **{key}**."
+    )
+
+# /listar_transformacoes
+@tree.command(name="listar_transformacoes", description="Lista todas as transformações registradas de um personagem")
+@app_commands.describe(nome="Nome do personagem")
+async def listar_transformacoes(interaction, nome: str):
+    data = load()
+    key = get_key(data, nome)
+    if not key:
+        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
+        return
+    transformacoes = data[key].get("transformacoes", {})
+    if not transformacoes:
+        await interaction.response.send_message(f"**{key}** não tem transformações registradas.", ephemeral=True)
+        return
+    embed = discord.Embed(title=f"✨ Transformações de {key}", color=0x4a7fff)
+    for t in transformacoes.values():
+        embed.add_field(
+            name=t["nome"],
+            value=f"HP ×`{t['hp_mult']}` | Energia ×`{t['energia_mult']}` | LBA ×`{t['lba_mult']}` | Vel +`{t.get('vel_add', 0)}`",
+            inline=False
+        )
+    await interaction.response.send_message(embed=embed)
+
 # /extra_set
 @tree.command(name="extra_set", description="Define um stat especial do personagem (ex: Queimadura, Corda)")
 @app_commands.describe(
@@ -545,7 +595,9 @@ async def ajuda(interaction):
     embed.add_field(name="✨ TRANSFORMAÇÕES", value=
         "`/registrar_transformacao` — cadastra transformação com multiplicadores\n"
         "`/transformar [nome] [estado]` — aplica transformação nos stats atuais\n"
-        "`/transformar [nome] base` — reverte para base",
+        "`/transformar [nome] base` — reverte para base\n"
+        "`/listar_transformacoes [nome]` — lista todas as transformações\n"
+        "`/deletar_transformacao [nome] [estado]` — remove uma transformação",
         inline=False)
     embed.add_field(name="📌 STATS ESPECIAIS", value=
         "`/extra_set [nome] [campo] [valor]` — define stat único\n"
