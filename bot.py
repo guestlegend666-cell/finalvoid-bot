@@ -193,7 +193,9 @@ def status_embed(name, char):
         alertas.append("☠️ ENERGIA ZERADA — PERSONAGEM INATIVO")
     if evasivas == 0:
         alertas.append("💨 SEM EVASIVAS — RECUPERE COM TÉCNICA DE VELOCIDADE")
-    if controle <= 0:
+    if controle == 0:
+        alertas.append(f"⚠️ CONTROLE ZERADO — próxima técnica de controle falha")
+    elif controle < 0:
         alertas.append(f"🔴 CONTROLE NEGATIVO ({controle}) — TÉCNICAS DE CONTROLE FALHAM")
     if alertas:
         embed.add_field(name="ALERTAS", value="\n".join(alertas), inline=False)
@@ -398,7 +400,7 @@ async def curar(interaction, nome: str, valor: int):
 
 @tree.command(name="gastar", description="Gasta energia amaldiçoada de um personagem")
 @app_commands.describe(nome="Nome do personagem", valor="Quantidade de energia gasta")
-async def gastar(interaction, nome: str, valor: int):
+async def gastar(interaction, nome: str, valor: app_commands.Range[int, 1, 999999999]):
     data = load()
     key = get_key(data, nome)
     if not key:
@@ -523,6 +525,46 @@ async def evasiva_recuperar(interaction, nome: str, oponente: str = None):
     save(data)
     await interaction.response.send_message(
         f"💨 **{key}** recuperou evasivas → `{novas}`\n_{detalhe}_",
+        embed=status_embed(key, char)
+    )
+
+@tree.command(name="evasiva_set", description="Define manualmente o número de evasivas de um personagem")
+@app_commands.describe(
+    nome="Nome do personagem",
+    valor="Novo valor de evasivas (qualquer número)"
+)
+async def evasiva_set(interaction, nome: str, valor: int):
+    data = load()
+    key = get_key(data, nome)
+    if not key:
+        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
+        return
+    char = data[key]
+    antes = char.get("evasivas", 5)
+    char["evasivas"] = valor
+    save(data)
+    await interaction.response.send_message(
+        f"💨 **{key}** evasivas definidas manualmente.\n`Evasivas: {antes} → {valor}`",
+        embed=status_embed(key, char)
+    )
+
+@tree.command(name="evasiva_add", description="Adiciona evasivas por cima do valor atual de um personagem")
+@app_commands.describe(
+    nome="Nome do personagem",
+    quantidade="Quantas evasivas adicionar"
+)
+async def evasiva_add(interaction, nome: str, quantidade: int):
+    data = load()
+    key = get_key(data, nome)
+    if not key:
+        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
+        return
+    char = data[key]
+    antes = char.get("evasivas", 5)
+    char["evasivas"] = antes + quantidade
+    save(data)
+    await interaction.response.send_message(
+        f"💨 **{key}** recebeu `+{quantidade}` evasiva(s).\n`Evasivas: {antes} → {char['evasivas']}`",
         embed=status_embed(key, char)
     )
 
@@ -1154,6 +1196,8 @@ async def ajuda(interaction):
         "`/evasiva_usar [nome] [qtd]` — gasta evasivas\n"
         "`/evasiva_recuperar [nome]` — recupera (base 5)\n"
         "`/evasiva_recuperar [nome] [oponente]` — recupera com bônus de vel.\n"
+        "`/evasiva_add [nome] [qtd]` — adiciona evasivas por cima do atual\n"
+        "`/evasiva_set [nome] [valor]` — define evasivas manualmente\n"
         "`/comparar_velocidade [nome1] [nome2]` — compara vel. e evasivas",
         inline=False)
     embed.add_field(name="✨ TRANSFORMAÇÕES", value=
