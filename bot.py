@@ -1,6 +1,3 @@
-bash
-
-cat > /home/claude/bot.py << 'PYEOF'
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -17,9 +14,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# ════════════════════════════════
-# DATA
-# ════════════════════════════════
+# ── DATA ──
 def load():
     if not Path(DATA_FILE).exists():
         return {}
@@ -42,208 +37,179 @@ def get_key(data, name):
             return k
     return None
 
-# ════════════════════════════════
-# HELPERS DE CÁLCULO
-# ════════════════════════════════
-
-# ── EVASIVAS por diferença de velocidade ──
-def calcular_evasivas_bonus(vel_propria, vel_oponente):
+# ── EVASIVAS ──
+def calcular_evasivas(vel_propria, vel_oponente):
     diff = vel_propria - vel_oponente
-    if diff <= 0:   return 5
-    elif diff <= 1: return 5
-    elif diff <= 3: return 7
-    elif diff <= 5: return 9
-    else:           return 10
+    base = 5
+    if diff <= 1:
+        return base
+    elif diff <= 3:
+        return base + 2
+    elif diff <= 5:
+        return base + 4
+    else:
+        return base + 5
 
-def calcular_evasivas_penalidade(vel_propria, vel_oponente):
+def evasivas_penalidade(vel_propria, vel_oponente):
     diff = vel_oponente - vel_propria
-    if diff >= 6: return 3
+    if diff >= 6:
+        return 3
     return 5
 
-# ── REIATSU: Controle ──
+# ── REIATSU: CONTROLE, REINO, IMPACTO ──
 def calcular_controle_base(reiatsu):
-    """Base sempre 3. Reiatsu alto dá bônus."""
-    if reiatsu >= 80000: return 5
-    if reiatsu >= 60000: return 4
-    return 3
-
-def controle_gasto(reiatsu_atacante, reiatsu_alvo):
-    """Quanto gasta ao usar técnica de controle. Diferença pode reduzir custo."""
-    diff = reiatsu_atacante - reiatsu_alvo
-    if diff >= 30000: return 0   # domínio total — não gasta
-    if diff >= 20000: return 0   # vantagem alta — não gasta
-    if diff >= 10000: return 1   # vantagem pequena — gasto normal
-    if diff >= 0:     return 1   # empate — gasto normal
-    if diff >= -10000: return 2  # desvantagem pequena — gasta 2
-    return 3                     # desvantagem grande — gasta 3 (pode negativar)
-
-def recuperar_controle_apos_aposta(pontos_atuais, ganhou):
-    """Recuperação pós Hado de Aposta. Considera negativo."""
-    if ganhou:
-        if pontos_atuais >= 0:   return min(calcular_controle_base(0) + 2, pontos_atuais + 3)
-        if pontos_atuais == -1:  return pontos_atuais + 2
-        if pontos_atuais == -2:  return pontos_atuais + 1
-        return pontos_atuais  # -3 ou pior: fica travado por esse Aposta
+    """Pontos de controle base. A partir de 50k ganham +1, 80k+ ganham +2."""
+    if reiatsu >= 80000:
+        return 5
+    elif reiatsu >= 50000:
+        return 4
     else:
-        return pontos_atuais - 1  # perde 1 (pode negativar)
+        return 3
 
-# ── REIATSU: Conflito de Reinos ──
-def avaliar_conflito_reinos(r1, r2, nome1, nome2):
+def analisar_reiatsu(r1, r2, nome1, nome2):
+    """Retorna análise completa dos três quesitos de reiatsu."""
     diff = abs(r1 - r2)
     mais_forte = nome1 if r1 >= r2 else nome2
     mais_fraco = nome2 if r1 >= r2 else nome1
-    if diff >= 30000:
-        return (f"🌌 **Domínio Automático** — {mais_forte} se expande sem resistência. "
-                f"{mais_fraco} não consegue expandir seu domínio neste conflito.")
-    elif diff >= 20000:
-        return (f"⚡ **Vantagem Alta** — {mais_forte} tem dominação clara. "
-                f"{mais_fraco} enfrenta resistência severa ao expandir.")
-    elif diff >= 10000:
-        return (f"📊 **Vantagem Pequena** — {mais_forte} tem leve superioridade no conflito de reinos. "
-                f"Conflito real mas inclinado.")
+    r_forte = max(r1, r2)
+    r_fraco = min(r1, r2)
+
+    # CONTROLE
+    if diff == 0:
+        controle = f"⚖️ **CONTROLE** — Empate total. Ambos gastam 1 ponto por técnica de controle normalmente."
+    elif diff < 10000:
+        controle = (f"⚖️ **CONTROLE** — Diferença pequena (`{diff:,}`).\n"
+                    f"**{mais_forte}** tem leve vantagem: técnicas de controle custam 1pt, resistência leve ao ser controlado.\n"
+                    f"**{mais_fraco}** sofre efeitos com ligeiramente mais facilidade.")
+    elif diff < 20000:
+        controle = (f"🔒 **CONTROLE** — Diferença significativa (`{diff:,}`).\n"
+                    f"**{mais_forte}**: técnicas de controle custam 1pt, resistência moderada.\n"
+                    f"**{mais_fraco}**: técnicas de controle falham se pontos de controle ≤ 0, maior chance de ser afetado.")
+    elif diff < 30000:
+        controle = (f"🔒 **CONTROLE** — Diferença alta (`{diff:,}`).\n"
+                    f"**{mais_forte}**: controla com facilidade, resistência alta — técnicas do mais fraco exigem +1pt extra para funcionar.\n"
+                    f"**{mais_fraco}**: difícil controlar o mais forte. Técnicas custam 1pt extra.")
     else:
-        return f"⚔️ **Conflito Real** — Nenhum lado tem vantagem automática. Resultado depende das técnicas."
+        controle = (f"💀 **CONTROLE** — Diferença extrema (`{diff:,}`).\n"
+                    f"**{mais_forte}**: controle sem resistência real. Técnicas do mais fraco **automaticamente falham**.\n"
+                    f"**{mais_fraco}**: não consegue controlar {mais_forte} independente dos pontos.")
 
-# ── REIATSU: Impacto ──
-def avaliar_impacto_reiatsu(r_atacante, r_alvo, nome_atacante, nome_alvo):
-    diff = r_atacante - r_alvo
-    if diff >= 50000:
-        return (f"☠️ **IMPACTO LETAL** — A presença de {nome_atacante} é fisicamente destrutiva para {nome_alvo}. "
-                f"Aproximação causa dano direto. Comparável ao Helt Coyote (90k).")
-    elif diff >= 30000:
-        return (f"💀 **IMPACTO SEVERO** — {nome_alvo} sente a pressão espiritual como força física. "
-                f"Movimentação comprometida, dificuldade grave em combate.")
-    elif diff >= 20000:
-        return (f"⚠️ **IMPACTO ALTO** — {nome_alvo} sente peso real da presença de {nome_atacante}. "
-                f"Pequena penalidade na agilidade e concentração.")
-    elif diff >= 10000:
-        return (f"📉 **IMPACTO LEVE** — {nome_alvo} percebe a diferença de pressão. "
-                f"Efeito mínimo em combate mas presente.")
-    elif diff > 0:
-        return f"〰️ **Diferença mínima** — Pouco impacto perceptível."
+    # REINO / DOMÍNIO
+    if diff == 0:
+        reino = "⚔️ **CONFLITO DE REINOS** — Confronto real. Nenhum lado tem vantagem de domínio."
+    elif diff < 10000:
+        reino = (f"⚔️ **CONFLITO DE REINOS** — Pequena vantagem (`{diff:,}`).\n"
+                 f"**{mais_forte}** tem leve pressão de domínio, mas o conflito ainda é real.")
+    elif diff < 20000:
+        reino = (f"🌀 **CONFLITO DE REINOS** — Vantagem alta (`{diff:,}`).\n"
+                 f"**{mais_forte}** domina o conflito claramente. Domínio de {mais_fraco} é comprimido.")
+    elif diff < 30000:
+        reino = (f"🌀 **CONFLITO DE REINOS** — Dominação (`{diff:,}`).\n"
+                 f"**{mais_forte}** suprime o domínio de {mais_fraco}. Expansão de reino do mais fraco requer esforço ativo.")
     else:
-        return f"✅ **Sem impacto** — {nome_alvo} tem Reiatsu igual ou superior. Nenhuma pressão."
+        reino = (f"👑 **CONFLITO DE REINOS** — Sem conflito (`{diff:,}`).\n"
+                 f"**{mais_forte}** expande o domínio **automaticamente**. O reino de {mais_fraco} colapsa sem resistência.")
 
-# ════════════════════════════════
-# SISTEMA DE TRANSFORMAÇÕES (EMPILHAMENTO CORRETO)
-# ════════════════════════════════
-def aplicar_transformacao(char, transformacao):
-    """
-    Aplica transformação sempre sobre os stats BASE, não sobre os atuais.
-    Isso resolve o problema de empilhar transformações.
-    """
-    char["estado"] = transformacao["nome"]
-    char["estado_stack"] = char.get("estado_stack", [])
-    
-    # Sempre calcula sobre a base
-    hp_base   = char["hp_base"]
-    en_base   = char["energia_base"]
-    lba_base  = char["lba_base"]
-    vel_base  = char["velocidade_base"]
-
-    # Aplica o multiplicador desta transformação
-    novo_hp_max  = int(hp_base  * transformacao["hp_mult"])
-    novo_en_max  = int(en_base  * transformacao["energia_mult"])
-    novo_lba     = int(lba_base * transformacao["lba_mult"])
-    nova_vel     = min(10, vel_base + transformacao.get("vel_add", 0))
-
-    # Mantém proporção de HP e Energia atuais
-    if char["hp_max"] > 0:
-        hp_ratio = char["hp"] / char["hp_max"]
+    # IMPACTO / PRESSÃO
+    if diff == 0:
+        impacto = "💫 **IMPACTO** — Pressão equivalente. Nenhum efeito de intimidação passiva."
+    elif diff < 10000:
+        impacto = (f"💫 **IMPACTO** — Pressão leve (`{diff:,}`).\n"
+                   f"**{mais_forte}** causa desconforto sutil em {mais_fraco} pela presença.")
+    elif diff < 20000:
+        impacto = (f"⚡ **IMPACTO** — Pressão real (`{diff:,}`).\n"
+                   f"**{mais_forte}**: presença do reiatsu perceptível fisicamente. {mais_fraco} sente dificuldade de concentração.")
+    elif diff < 30000:
+        impacto = (f"⚡ **IMPACTO** — Pressão severa (`{diff:,}`).\n"
+                   f"**{mais_forte}**: reiatsu sufocante. {mais_fraco} pode ter movimento reduzido pela pressão passiva.")
+    elif diff < 50000:
+        impacto = (f"💀 **IMPACTO** — Pressão esmagadora (`{diff:,}`).\n"
+                   f"**{mais_forte}**: aproximar de {mais_fraco} já causa dificuldade de luta. Haki-tipo — paralisar pela presença é possível.")
     else:
-        hp_ratio = 1.0
-    if char["energia_max"] > 0:
-        en_ratio = char["energia"] / char["energia_max"]
-    else:
-        en_ratio = 1.0
+        impacto = (f"☠️ **IMPACTO** — Pressão letal (`{diff:,}`).\n"
+                   f"**{mais_forte}**: como Helt Coyote com 90k — **{mais_fraco} pode ser incapacitado ou morto apenas pela proximidade.**\n"
+                   f"Luta convencional pode ser impossível.")
 
-    char["hp_max"]      = novo_hp_max
-    char["hp"]          = int(novo_hp_max * hp_ratio)
-    char["energia_max"] = novo_en_max
-    char["energia"]     = int(novo_en_max * en_ratio)
-    char["lba"]         = novo_lba
-    char["velocidade"]  = nova_vel
+    return controle, reino, impacto
 
-def reverter_base(char):
-    """Reverte para os stats base completamente."""
-    char["estado"]     = "Base"
-    char["hp_max"]     = char["hp_base"]
-    char["energia_max"]= char["energia_base"]
-    char["lba"]        = char["lba_base"]
-    char["velocidade"] = char["velocidade_base"]
-    # Mantém HP e energia na proporção atual
-    char["hp"]         = min(char["hp"],     char["hp_max"])
-    char["energia"]    = min(char["energia"], char["energia_max"])
-
-# ════════════════════════════════
-# EMBED DE STATUS
-# ════════════════════════════════
+# ── EMBED DE STATUS ──
 def status_embed(name, char):
     estado = char.get("estado", "Base")
-    cor = 0x4a7fff if estado == "Base" else 0xe03060
+    cor = 0x4a7fff if estado == "Base" else 0x30d0c0
 
-    hp_max = char.get("hp_max", char.get("hp", 0))
-    en_max = char.get("energia_max", char.get("energia", 0))
-    hp     = char.get("hp", 0)
-    en     = char.get("energia", 0)
+    hp_base = char.get("hp_base", char.get("hp_max", char.get("hp", 0)))
+    en_base = char.get("energia_base", char.get("energia_max", char.get("energia", 0)))
+    hp_max = char.get("hp_max", hp_base)
+    en_max = char.get("energia_max", en_base)
+    hp = char.get("hp", 0)
+    en = char.get("energia", 0)
+
     hp_pct = int((hp / hp_max * 100)) if hp_max > 0 else 0
     en_pct = int((en / en_max * 100)) if en_max > 0 else 0
 
-    vel      = char.get("velocidade", 0)
+    vel = char.get("velocidade", 0)
     evasivas = char.get("evasivas", 5)
     controle = char.get("controle", 3)
-    reiatsu  = char.get("reiatsu", 0)
 
     def barra(pct):
         filled = int(pct / 10)
         return "█" * filled + "░" * (10 - filled) + f" {pct}%"
 
     def barra_evasivas(atual, maximo=10):
-        atual = max(0, atual)
-        return "◆" * min(atual, maximo) + "◇" * (maximo - min(atual, maximo)) + f" {atual}"
+        filled = max(0, atual)
+        return "◆" * filled + "◇" * (maximo - filled) + f" {atual}"
 
     def barra_controle(atual):
-        cor_c = "🟢" if atual >= 2 else ("🟡" if atual == 1 else "🔴")
-        return f"{cor_c} `{atual}` ponto(s)"
+        filled = max(0, min(5, atual))
+        simbolo = "⬛" if atual < 0 else "🟦"
+        return "🟦" * filled + "⬜" * (3 - filled) + f" {atual}" if atual >= 0 else f"🔴 {atual} (NEGATIVO)"
 
     embed = discord.Embed(title=f"◈ {name}", color=cor)
-    embed.add_field(name="Estado",      value=f"`{estado}`",          inline=True)
-    embed.add_field(name="Reiatsu",     value=f"`{reiatsu:,}`",       inline=True)
-    embed.add_field(name="Velocidade",  value=f"`{vel}/10`",          inline=True)
-    embed.add_field(name=f"HP [{hp:,} / {hp_max:,}]",        value=barra(hp_pct), inline=False)
-    embed.add_field(name=f"Energia [{en:,} / {en_max:,}]",   value=barra(en_pct), inline=False)
-    embed.add_field(name="LBA",         value=f"`{char.get('lba', 0):,}`", inline=True)
-    embed.add_field(name="Evasivas",    value=barra_evasivas(evasivas),    inline=True)
-    embed.add_field(name="Controle",    value=barra_controle(controle),    inline=True)
+    embed.add_field(name="Estado", value=f"`{estado}`", inline=True)
+    embed.add_field(name="Reiatsu", value=f"`{char.get('reiatsu', '—'):,}`", inline=True)
+    embed.add_field(name="Velocidade", value=f"`{vel}/10`", inline=True)
+    embed.add_field(name=f"HP [{hp:,} / {hp_max:,}]", value=barra(hp_pct), inline=False)
+    embed.add_field(name=f"Energia Amaldiçoada [{en:,} / {en_max:,}]", value=barra(en_pct), inline=False)
+    embed.add_field(name="LBA", value=f"`{char.get('lba', '—'):,}`", inline=True)
+    embed.add_field(name="Evasivas", value=barra_evasivas(evasivas), inline=True)
+    embed.add_field(name="Controle", value=barra_controle(controle), inline=True)
 
     extras = char.get("extras", {})
     if extras:
         for k, v in extras.items():
             embed.add_field(name=k, value=f"`{v}`", inline=True)
 
+    # Estado de transformação
+    historico = char.get("historico_transformacoes", [])
+    if historico:
+        embed.add_field(name="Transformações Ativas", value=" → ".join(historico), inline=False)
+
     alertas = []
-    if hp_pct <= 20:    alertas.append("⚠️ HP CRÍTICO")
-    if en_pct <= 10:    alertas.append("⚠️ ENERGIA CRÍTICA")
-    if en <= 0:         alertas.append("☠️ ENERGIA ZERADA — PERSONAGEM INATIVO")
-    if evasivas == 0:   alertas.append("💨 SEM EVASIVAS")
-    if controle <= 0:   alertas.append("🔴 CONTROLE NEGATIVO — TÉCNICAS DE CONTROLE FALHAM")
+    if hp_pct <= 20:
+        alertas.append("⚠️ HP CRÍTICO")
+    if en_pct <= 10:
+        alertas.append("⚠️ ENERGIA CRÍTICA — IMINENTE INATIVO")
+    if en <= 0:
+        alertas.append("☠️ ENERGIA ZERADA — PERSONAGEM INATIVO")
+    if evasivas == 0:
+        alertas.append("💨 SEM EVASIVAS — RECUPERE COM TÉCNICA DE VELOCIDADE")
+    if controle <= 0:
+        alertas.append(f"🔴 CONTROLE NEGATIVO ({controle}) — TÉCNICAS DE CONTROLE FALHAM")
     if alertas:
         embed.add_field(name="ALERTAS", value="\n".join(alertas), inline=False)
 
     return embed
 
-# ════════════════════════════════
-# SINCRONIZAR
-# ════════════════════════════════
+# ── SINCRONIZAR ──
 @bot.event
 async def on_ready():
     try:
         synced = await tree.sync()
-        print(f"Bot online: {bot.user} | Comandos: {len(synced)}")
+        print(f"Bot online: {bot.user} | Comandos sincronizados: {len(synced)}")
     except Exception as e:
-        print(f"Erro sync: {e}")
+        print(f"Erro ao sincronizar comandos: {e}")
 
-@tree.command(name="sync", description="[ADMIN] Força sincronização dos comandos")
+@tree.command(name="sync", description="[ADMIN] Força sincronização dos comandos neste servidor")
 async def sync_cmd(interaction: discord.Interaction):
     guild = interaction.guild
     if guild is None:
@@ -251,11 +217,14 @@ async def sync_cmd(interaction: discord.Interaction):
         return
     tree.copy_global_to(guild=guild)
     synced = await tree.sync(guild=guild)
-    await interaction.response.send_message(f"✅ {len(synced)} comandos sincronizados.", ephemeral=True)
+    await interaction.response.send_message(
+        f"✅ Sincronizados **{len(synced)}** comandos neste servidor.",
+        ephemeral=True
+    )
 
-# ════════════════════════════════
+# ════════════════════════════════════════════
 # PERSONAGENS
-# ════════════════════════════════
+# ════════════════════════════════════════════
 
 @tree.command(name="registrar", description="Registra um personagem no sistema")
 @app_commands.describe(
@@ -266,8 +235,7 @@ async def sync_cmd(interaction: discord.Interaction):
     lba="LBA base",
     velocidade="Velocidade de 1 a 10"
 )
-async def registrar(interaction, nome: str, hp: int, energia: int, reiatsu: int, lba: int,
-                    velocidade: app_commands.Range[int, 1, 10]):
+async def registrar(interaction, nome: str, hp: int, energia: int, reiatsu: int, lba: int, velocidade: app_commands.Range[int, 1, 10]):
     data = load()
     controle_base = calcular_controle_base(reiatsu)
     data[nome] = {
@@ -280,23 +248,24 @@ async def registrar(interaction, nome: str, hp: int, energia: int, reiatsu: int,
         "evasivas": 5,
         "controle": controle_base,
         "estado": "Base",
-        # Stats base (nunca mudam, usados para calcular transformações)
+        # Stats base imutáveis (sempre a referência para reverter)
         "hp_base": hp,
         "energia_base": energia,
         "lba_base": lba,
         "velocidade_base": velocidade,
         "controle_base": controle_base,
-        # Dados
+        # Transformações
         "transformacoes": {},
+        "historico_transformacoes": [],
         "extras": {}
     }
     save(data)
     await interaction.response.send_message(
-        f"✅ **{nome}** registrado! Controle base: `{controle_base}` (Reiatsu `{reiatsu:,}`)",
+        f"✅ **{nome}** registrado! Controle base: `{controle_base}` (reiatsu `{reiatsu:,}`)",
         embed=status_embed(nome, data[nome])
     )
 
-@tree.command(name="status", description="Mostra o status de um personagem")
+@tree.command(name="status", description="Mostra o status atual de um personagem")
 @app_commands.describe(nome="Nome do personagem")
 async def status(interaction, nome: str):
     data = load()
@@ -310,15 +279,27 @@ async def status(interaction, nome: str):
 async def todos(interaction):
     data = load()
     if not data:
-        await interaction.response.send_message("Nenhum personagem registrado.")
+        await interaction.response.send_message("Nenhum personagem registrado ainda.")
         return
     await interaction.response.defer()
     for nome, char in data.items():
         await interaction.followup.send(embed=status_embed(nome, char))
 
-# ════════════════════════════════
-# COMBATE — HP E ENERGIA
-# ════════════════════════════════
+@tree.command(name="deletar", description="Remove um personagem do sistema")
+@app_commands.describe(nome="Nome do personagem")
+async def deletar(interaction, nome: str):
+    data = load()
+    key = get_key(data, nome)
+    if not key:
+        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
+        return
+    del data[key]
+    save(data)
+    await interaction.response.send_message(f"🗑️ **{key}** removido do sistema.")
+
+# ════════════════════════════════════════════
+# COMBATE BÁSICO
+# ════════════════════════════════════════════
 
 @tree.command(name="dano", description="Aplica dano no HP de um personagem")
 @app_commands.describe(nome="Nome do personagem", valor="Quantidade de dano")
@@ -332,8 +313,9 @@ async def dano(interaction, nome: str, valor: int):
     antes = char["hp"]
     char["hp"] = max(0, char["hp"] - valor)
     save(data)
+    diff = antes - char["hp"]
     await interaction.response.send_message(
-        f"💥 **{key}** recebeu `{antes - char['hp']:,}` de dano.\n`HP: {antes:,} → {char['hp']:,}`",
+        f"💥 **{key}** recebeu `{diff:,}` de dano.\n`HP: {antes:,} → {char['hp']:,}`",
         embed=status_embed(key, char)
     )
 
@@ -349,13 +331,14 @@ async def curar(interaction, nome: str, valor: int):
     antes = char["hp"]
     char["hp"] = min(char["hp_max"], char["hp"] + valor)
     save(data)
+    diff = char["hp"] - antes
     await interaction.response.send_message(
-        f"💚 **{key}** recuperou `{char['hp'] - antes:,}` de HP.\n`HP: {antes:,} → {char['hp']:,}`",
+        f"💚 **{key}** recuperou `{diff:,}` de HP.\n`HP: {antes:,} → {char['hp']:,}`",
         embed=status_embed(key, char)
     )
 
-@tree.command(name="gastar", description="Gasta energia amaldiçoada")
-@app_commands.describe(nome="Nome do personagem", valor="Quantidade gasta")
+@tree.command(name="gastar", description="Gasta energia amaldiçoada de um personagem")
+@app_commands.describe(nome="Nome do personagem", valor="Quantidade de energia gasta")
 async def gastar(interaction, nome: str, valor: int):
     data = load()
     key = get_key(data, nome)
@@ -366,13 +349,14 @@ async def gastar(interaction, nome: str, valor: int):
     antes = char["energia"]
     char["energia"] = max(0, char["energia"] - valor)
     save(data)
-    msg = f"⚡ **{key}** gastou `{antes - char['energia']:,}` de energia.\n`Energia: {antes:,} → {char['energia']:,}`"
+    diff = antes - char["energia"]
+    msg = f"⚡ **{key}** gastou `{diff:,}` de energia.\n`Energia: {antes:,} → {char['energia']:,}`"
     if char["energia"] == 0:
         msg += "\n☠️ **ENERGIA ZERADA — PERSONAGEM INATIVO**"
     await interaction.response.send_message(msg, embed=status_embed(key, char))
 
-@tree.command(name="recuperar", description="Recupera energia amaldiçoada")
-@app_commands.describe(nome="Nome do personagem", valor="Quantidade recuperada")
+@tree.command(name="recuperar", description="Recupera energia amaldiçoada de um personagem")
+@app_commands.describe(nome="Nome do personagem", valor="Quantidade de energia recuperada")
 async def recuperar(interaction, nome: str, valor: int):
     data = load()
     key = get_key(data, nome)
@@ -383,29 +367,15 @@ async def recuperar(interaction, nome: str, valor: int):
     antes = char["energia"]
     char["energia"] = min(char["energia_max"], char["energia"] + valor)
     save(data)
+    diff = char["energia"] - antes
     await interaction.response.send_message(
-        f"🔵 **{key}** recuperou `{char['energia'] - antes:,}` de energia.\n`Energia: {antes:,} → {char['energia']:,}`",
+        f"🔵 **{key}** recuperou `{diff:,}` de energia.\n`Energia: {antes:,} → {char['energia']:,}`",
         embed=status_embed(key, char)
     )
 
-@tree.command(name="lba", description="Altera o LBA de um personagem")
-@app_commands.describe(nome="Nome do personagem", valor="Novo valor de LBA")
-async def lba_cmd(interaction, nome: str, valor: int):
-    data = load()
-    key = get_key(data, nome)
-    if not key:
-        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
-        return
-    data[key]["lba"] = valor
-    save(data)
-    await interaction.response.send_message(
-        f"⚔️ **{key}** LBA → `{valor:,}`",
-        embed=status_embed(key, data[key])
-    )
-
-@tree.command(name="velocidade", description="Altera a velocidade de um personagem (1-10)")
-@app_commands.describe(nome="Nome do personagem", valor="Nova velocidade")
-async def velocidade_cmd(interaction, nome: str, valor: app_commands.Range[int, 1, 10]):
+@tree.command(name="velocidade", description="Altera a velocidade de um personagem (escala 1-10)")
+@app_commands.describe(nome="Nome do personagem", valor="Nova velocidade de 1 a 10")
+async def velocidade(interaction, nome: str, valor: app_commands.Range[int, 1, 10]):
     data = load()
     key = get_key(data, nome)
     if not key:
@@ -418,11 +388,26 @@ async def velocidade_cmd(interaction, nome: str, valor: app_commands.Range[int, 
         embed=status_embed(key, data[key])
     )
 
-# ════════════════════════════════
-# EVASIVAS
-# ════════════════════════════════
+@tree.command(name="lba", description="Altera o LBA de um personagem")
+@app_commands.describe(nome="Nome do personagem", valor="Novo valor de LBA")
+async def lba(interaction, nome: str, valor: int):
+    data = load()
+    key = get_key(data, nome)
+    if not key:
+        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
+        return
+    data[key]["lba"] = valor
+    save(data)
+    await interaction.response.send_message(
+        f"⚔️ **{key}** LBA → `{valor:,}`",
+        embed=status_embed(key, data[key])
+    )
 
-@tree.command(name="evasiva_usar", description="Registra o uso de evasivas")
+# ════════════════════════════════════════════
+# EVASIVAS
+# ════════════════════════════════════════════
+
+@tree.command(name="evasiva_usar", description="Registra o uso de evasivas em um desvio")
 @app_commands.describe(nome="Nome do personagem", quantidade="Quantas evasivas foram gastas")
 async def evasiva_usar(interaction, nome: str, quantidade: app_commands.Range[int, 1, 10]):
     data = load()
@@ -434,16 +419,18 @@ async def evasiva_usar(interaction, nome: str, quantidade: app_commands.Range[in
     antes = char.get("evasivas", 5)
     if antes <= 0:
         await interaction.response.send_message(
-            f"❌ **{key}** não tem evasivas. Use `/evasiva_recuperar`.", ephemeral=True)
+            f"❌ **{key}** não tem evasivas restantes. Use `/evasiva_recuperar`.",
+            ephemeral=True
+        )
         return
     char["evasivas"] = max(0, antes - quantidade)
     save(data)
-    msg = f"💨 **{key}** usou `{quantidade}` evasiva(s).\n`{antes} → {char['evasivas']}`"
+    msg = f"💨 **{key}** usou `{quantidade}` evasiva(s).\n`Evasivas: {antes} → {char['evasivas']}`"
     if char["evasivas"] == 0:
-        msg += "\n💨 **SEM EVASIVAS — use técnica de velocidade para recuperar**"
+        msg += "\n💨 **SEM EVASIVAS — RECUPERE COM TÉCNICA DE VELOCIDADE**"
     await interaction.response.send_message(msg, embed=status_embed(key, char))
 
-@tree.command(name="evasiva_recuperar", description="Recupera evasivas. Com oponente: calcula bônus de velocidade.")
+@tree.command(name="evasiva_recuperar", description="Recupera as evasivas de um personagem (com ou sem comparação de velocidade)")
 @app_commands.describe(
     nome="Nome do personagem",
     oponente="(Opcional) Nome do oponente para calcular bônus de velocidade"
@@ -458,25 +445,29 @@ async def evasiva_recuperar(interaction, nome: str, oponente: str = None):
     v1 = char.get("velocidade", 5)
 
     if oponente:
-        key2 = get_key(data, oponente)
-        if not key2:
+        k2 = get_key(data, oponente)
+        if not k2:
             await interaction.response.send_message(f"❌ **{oponente}** não encontrado.", ephemeral=True)
             return
-        v2 = data[key2].get("velocidade", 5)
-        novas = calcular_evasivas_bonus(v1, v2) if v1 >= v2 else calcular_evasivas_penalidade(v1, v2)
-        msg_extra = f"vs **{key2}** (vel `{v2}/10`) → `{novas}` evasivas"
+        v2 = data[k2].get("velocidade", 5)
+        if v1 >= v2:
+            novas = calcular_evasivas(v1, v2)
+            detalhe = f"Velocidade {v1} vs {v2} → +{novas - 5} bônus" if novas > 5 else f"Velocidade {v1} vs {v2} → sem bônus"
+        else:
+            novas = evasivas_penalidade(v1, v2)
+            detalhe = f"Velocidade {v1} vs {v2} → penalidade (mais lento)"
     else:
         novas = 5
-        msg_extra = "recuperação base → `5` evasivas"
+        detalhe = "Recuperação base (sem comparação de velocidade)"
 
     char["evasivas"] = novas
     save(data)
     await interaction.response.send_message(
-        f"💨 **{key}** recuperou evasivas ({msg_extra}).",
+        f"💨 **{key}** recuperou evasivas → `{novas}`\n_{detalhe}_",
         embed=status_embed(key, char)
     )
 
-@tree.command(name="comparar_velocidade", description="Compara velocidade e evasivas entre dois personagens")
+@tree.command(name="comparar_velocidade", description="Mostra a diferença de velocidade e evasivas entre dois personagens")
 @app_commands.describe(nome1="Primeiro personagem", nome2="Segundo personagem")
 async def comparar_velocidade(interaction, nome1: str, nome2: str):
     data = load()
@@ -485,48 +476,50 @@ async def comparar_velocidade(interaction, nome1: str, nome2: str):
     if not k1 or not k2:
         await interaction.response.send_message("❌ Um dos personagens não foi encontrado.", ephemeral=True)
         return
+
     v1 = data[k1].get("velocidade", 5)
     v2 = data[k2].get("velocidade", 5)
     diff = abs(v1 - v2)
-    ev1 = calcular_evasivas_bonus(v1, v2) if v1 >= v2 else calcular_evasivas_penalidade(v1, v2)
-    ev2 = calcular_evasivas_bonus(v2, v1) if v2 >= v1 else calcular_evasivas_penalidade(v2, v1)
+
+    ev1 = calcular_evasivas(v1, v2) if v1 >= v2 else evasivas_penalidade(v1, v2)
+    ev2 = calcular_evasivas(v2, v1) if v2 >= v1 else evasivas_penalidade(v2, v1)
 
     embed = discord.Embed(title="💨 COMPARAÇÃO DE VELOCIDADE", color=0x4a7fff)
-    embed.add_field(name=k1, value=f"Vel: `{v1}/10` | Evasivas ao rec.: `{ev1}`", inline=True)
-    embed.add_field(name=k2, value=f"Vel: `{v2}/10` | Evasivas ao rec.: `{ev2}`", inline=True)
+    embed.add_field(name=k1, value=f"Velocidade: `{v1}/10`\nEvasivas ao recuperar: `{ev1}`", inline=True)
+    embed.add_field(name=k2, value=f"Velocidade: `{v2}/10`\nEvasivas ao recuperar: `{ev2}`", inline=True)
     embed.add_field(name="Diferença", value=f"`{diff}` ponto(s)", inline=False)
 
     if diff == 0:
-        res = "Empate — ambos com 5 evasivas base."
+        embed.add_field(name="Resultado", value="Empate — ambos com 5 evasivas base.", inline=False)
     elif diff <= 1:
-        res = "Empate prático. Sem vantagem real."
+        embed.add_field(name="Resultado", value="Empate prático. Sem vantagem real de evasiva.", inline=False)
     elif diff <= 3:
-        res = f"**{''.join([k1 if v1 > v2 else k2])}** tem vantagem leve (+2 evasivas)."
+        mais_rapido = k1 if v1 > v2 else k2
+        embed.add_field(name="Resultado", value=f"**{mais_rapido}** tem vantagem leve (+2 evasivas).", inline=False)
     elif diff <= 5:
-        res = f"**{''.join([k1 if v1 > v2 else k2])}** tem vantagem clara (+4 evasivas)."
+        mais_rapido = k1 if v1 > v2 else k2
+        embed.add_field(name="Resultado", value=f"**{mais_rapido}** tem vantagem clara (+4 evasivas).", inline=False)
     else:
-        mais = k1 if v1 > v2 else k2
-        menos = k2 if v1 > v2 else k1
-        res = f"**{mais}** domina (+5 evasivas). **{menos}** cai para 3 evasivas."
-    embed.add_field(name="Resultado", value=res, inline=False)
+        mais_rapido = k1 if v1 > v2 else k2
+        mais_lento = k2 if v1 > v2 else k1
+        embed.add_field(name="Resultado", value=f"**{mais_rapido}** domina em velocidade (+5 evasivas). **{mais_lento}** cai para 3 evasivas.", inline=False)
+
     await interaction.response.send_message(embed=embed)
 
-# ════════════════════════════════
+# ════════════════════════════════════════════
 # TRANSFORMAÇÕES — SISTEMA CORRIGIDO
-# ════════════════════════════════
+# ════════════════════════════════════════════
 
-@tree.command(name="registrar_transformacao", description="Registra uma transformação (calculada sempre sobre a base)")
+@tree.command(name="registrar_transformacao", description="Registra uma transformação para um personagem")
 @app_commands.describe(
     nome="Nome do personagem",
-    estado="Nome da transformação (ex: Shikai, Bankai)",
-    hp_mult="Multiplicador de HP sobre a base. Ex: 1.5 = +50%. Use 1 pra não mudar.",
-    energia_mult="Multiplicador de Energia sobre a base.",
-    lba_mult="Multiplicador de LBA sobre a base.",
-    vel_add="Pontos de velocidade a adicionar ao valor base."
+    estado="Nome da transformação (ex: Shikai, Bankai, Ressurreição)",
+    hp_mult="Multiplicador de HP (ex: 1.5). Use 1 pra não mudar.",
+    energia_mult="Multiplicador de Energia. Use 1 pra não mudar.",
+    lba_mult="Multiplicador de LBA. Use 1 pra não mudar.",
+    vel_add="Pontos de velocidade a adicionar (ex: 1). Use 0 pra não mudar."
 )
-async def registrar_transformacao(interaction, nome: str, estado: str,
-                                   hp_mult: float, energia_mult: float,
-                                   lba_mult: float, vel_add: int):
+async def registrar_transformacao(interaction, nome: str, estado: str, hp_mult: float, energia_mult: float, lba_mult: float, vel_add: int):
     data = load()
     key = get_key(data, nome)
     if not key:
@@ -542,25 +535,15 @@ async def registrar_transformacao(interaction, nome: str, estado: str,
         "vel_add": vel_add
     }
     save(data)
-    # Mostra como ficaria sobre a base
-    base = data[key]
-    hp_prev  = int(base["hp_base"]       * hp_mult)
-    en_prev  = int(base["energia_base"]  * energia_mult)
-    lba_prev = int(base["lba_base"]      * lba_mult)
-    vel_prev = min(10, base["velocidade_base"] + vel_add)
     await interaction.response.send_message(
         f"✅ Transformação **{estado}** registrada para **{key}**.\n"
-        f"*(Calculada sempre sobre a base, nunca empilha)*\n"
-        f"HP: `{base['hp_base']:,}` → `{hp_prev:,}` | "
-        f"Energia: `{base['energia_base']:,}` → `{en_prev:,}` | "
-        f"LBA: `{base['lba_base']:,}` → `{lba_prev:,}` | "
-        f"Vel: `{base['velocidade_base']}` → `{vel_prev}/10`"
+        f"HP ×`{hp_mult}` | Energia ×`{energia_mult}` | LBA ×`{lba_mult}` | Vel +`{vel_add}`"
     )
 
-@tree.command(name="transformar", description="Aplica uma transformação (sempre sobre a base, sem empilhar)")
+@tree.command(name="transformar", description="Aplica uma transformação no personagem (sempre a partir do estado base)")
 @app_commands.describe(
     nome="Nome do personagem",
-    estado="Nome da transformação, ou 'base' para reverter"
+    estado="Nome da transformação a aplicar"
 )
 async def transformar(interaction, nome: str, estado: str):
     data = load()
@@ -569,36 +552,185 @@ async def transformar(interaction, nome: str, estado: str):
         await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
         return
     char = data[key]
-
-    if estado.lower() == "base":
-        reverter_base(char)
-        save(data)
-        await interaction.response.send_message(
-            f"🔄 **{key}** reverteu para **Base**.",
-            embed=status_embed(key, char)
-        )
-        return
-
     transformacoes = char.get("transformacoes", {})
     t = transformacoes.get(estado.lower())
     if not t:
         lista = ", ".join([f"`{v['nome']}`" for v in transformacoes.values()]) or "nenhuma"
         await interaction.response.send_message(
-            f"❌ Transformação **{estado}** não encontrada em **{key}**.\n"
-            f"Registradas: {lista}\nUse `/registrar_transformacao` primeiro.",
+            f"❌ Transformação **{estado}** não registrada para **{key}**.\n"
+            f"Transformações disponíveis: {lista}\nUse `/registrar_transformacao` primeiro.",
             ephemeral=True
         )
         return
 
-    estado_anterior = char.get("estado", "Base")
-    aplicar_transformacao(char, t)
+    historico = char.get("historico_transformacoes", [])
+    if estado.lower() in [h.lower() for h in historico]:
+        await interaction.response.send_message(
+            f"⚠️ **{key}** já está em **{t['nome']}**. Use `/reverter` para voltar um nível ou `/base` para resetar tudo.",
+            ephemeral=True
+        )
+        return
+
+    # SEMPRE aplica a partir do BASE — acumula multiplicadores corretos
+    hp_b = char.get("hp_base", char["hp_max"])
+    en_b = char.get("energia_base", char["energia_max"])
+    lba_b = char.get("lba_base", char["lba"])
+    vel_b = char.get("velocidade_base", char["velocidade"])
+
+    # Calcula multiplicadores acumulados de todas as transformações ativas + nova
+    novo_historico = historico + [t["nome"]]
+    hp_mult_total = 1.0
+    en_mult_total = 1.0
+    lba_mult_total = 1.0
+    vel_add_total = 0
+
+    for t_nome in novo_historico:
+        t_data = transformacoes.get(t_nome.lower())
+        if t_data:
+            hp_mult_total *= t_data["hp_mult"]
+            en_mult_total *= t_data["energia_mult"]
+            lba_mult_total *= t_data["lba_mult"]
+            vel_add_total += t_data.get("vel_add", 0)
+
+    # Aplica a partir do base
+    novo_hp_max = int(hp_b * hp_mult_total)
+    novo_en_max = int(en_b * en_mult_total)
+
+    # Mantém proporção de HP/Energia atuais
+    hp_ratio = char["hp"] / char["hp_max"] if char["hp_max"] > 0 else 1
+    en_ratio = char["energia"] / char["energia_max"] if char["energia_max"] > 0 else 1
+
+    char["hp_max"] = novo_hp_max
+    char["energia_max"] = novo_en_max
+    char["hp"] = int(novo_hp_max * hp_ratio)
+    char["energia"] = int(novo_en_max * en_ratio)
+    char["lba"] = int(lba_b * lba_mult_total)
+    char["velocidade"] = min(10, vel_b + vel_add_total)
+    char["estado"] = t["nome"]
+    char["historico_transformacoes"] = novo_historico
+
     save(data)
     await interaction.response.send_message(
-        f"✨ **{key}**: `{estado_anterior}` → **{t['nome']}** *(calculado sobre a base)*",
+        f"✨ **{key}** entrou em **{t['nome']}**!\n"
+        f"Pilha: {' → '.join(novo_historico)}",
         embed=status_embed(key, char)
     )
 
-@tree.command(name="listar_transformacoes", description="Lista todas as transformações de um personagem")
+@tree.command(name="reverter", description="Volta UM nível de transformação (desfaz a última)")
+@app_commands.describe(nome="Nome do personagem")
+async def reverter(interaction, nome: str):
+    data = load()
+    key = get_key(data, nome)
+    if not key:
+        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
+        return
+    char = data[key]
+    historico = char.get("historico_transformacoes", [])
+    if not historico:
+        await interaction.response.send_message(
+            f"⚠️ **{key}** já está na base. Não há transformações para reverter.",
+            ephemeral=True
+        )
+        return
+
+    ultimo = historico[-1]
+    novo_historico = historico[:-1]
+    transformacoes = char.get("transformacoes", {})
+
+    hp_b = char.get("hp_base", char["hp_max"])
+    en_b = char.get("energia_base", char["energia_max"])
+    lba_b = char.get("lba_base", char["lba"])
+    vel_b = char.get("velocidade_base", char["velocidade"])
+
+    if novo_historico:
+        hp_mult_total = 1.0
+        en_mult_total = 1.0
+        lba_mult_total = 1.0
+        vel_add_total = 0
+        for t_nome in novo_historico:
+            t_data = transformacoes.get(t_nome.lower())
+            if t_data:
+                hp_mult_total *= t_data["hp_mult"]
+                en_mult_total *= t_data["energia_mult"]
+                lba_mult_total *= t_data["lba_mult"]
+                vel_add_total += t_data.get("vel_add", 0)
+
+        novo_hp_max = int(hp_b * hp_mult_total)
+        novo_en_max = int(en_b * en_mult_total)
+        hp_ratio = char["hp"] / char["hp_max"] if char["hp_max"] > 0 else 1
+        en_ratio = char["energia"] / char["energia_max"] if char["energia_max"] > 0 else 1
+        char["hp_max"] = novo_hp_max
+        char["energia_max"] = novo_en_max
+        char["hp"] = min(int(novo_hp_max * hp_ratio), novo_hp_max)
+        char["energia"] = min(int(novo_en_max * en_ratio), novo_en_max)
+        char["lba"] = int(lba_b * lba_mult_total)
+        char["velocidade"] = min(10, vel_b + vel_add_total)
+        char["estado"] = novo_historico[-1]
+    else:
+        # Voltou para base
+        char["hp_max"] = hp_b
+        char["energia_max"] = en_b
+        char["hp"] = min(char["hp"], hp_b)
+        char["energia"] = min(char["energia"], en_b)
+        char["lba"] = lba_b
+        char["velocidade"] = vel_b
+        char["estado"] = "Base"
+
+    char["historico_transformacoes"] = novo_historico
+    save(data)
+    await interaction.response.send_message(
+        f"🔄 **{key}** reverteu **{ultimo}**.\n"
+        f"Estado atual: `{'Base' if not novo_historico else novo_historico[-1]}`",
+        embed=status_embed(key, char)
+    )
+
+@tree.command(name="base", description="Reverte o personagem completamente para o estado base (remove todas as transformações)")
+@app_commands.describe(nome="Nome do personagem")
+async def base(interaction, nome: str):
+    data = load()
+    key = get_key(data, nome)
+    if not key:
+        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
+        return
+    char = data[key]
+    hp_b = char.get("hp_base", char["hp_max"])
+    en_b = char.get("energia_base", char["energia_max"])
+    lba_b = char.get("lba_base", char["lba"])
+    vel_b = char.get("velocidade_base", char["velocidade"])
+
+    char["hp_max"] = hp_b
+    char["energia_max"] = en_b
+    char["hp"] = min(char["hp"], hp_b)
+    char["energia"] = min(char["energia"], en_b)
+    char["lba"] = lba_b
+    char["velocidade"] = vel_b
+    char["estado"] = "Base"
+    char["historico_transformacoes"] = []
+    save(data)
+    await interaction.response.send_message(
+        f"🔄 **{key}** voltou ao estado **Base** (todas as transformações removidas).",
+        embed=status_embed(key, char)
+    )
+
+@tree.command(name="resetar", description="Reseta HP, energia e evasivas para o máximo do estado atual")
+@app_commands.describe(nome="Nome do personagem")
+async def resetar(interaction, nome: str):
+    data = load()
+    key = get_key(data, nome)
+    if not key:
+        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
+        return
+    char = data[key]
+    char["hp"] = char["hp_max"]
+    char["energia"] = char["energia_max"]
+    char["evasivas"] = 5
+    save(data)
+    await interaction.response.send_message(
+        f"♻️ **{key}** HP e energia resetados para o máximo do estado atual (`{char['estado']}`).",
+        embed=status_embed(key, char)
+    )
+
+@tree.command(name="listar_transformacoes", description="Lista todas as transformações registradas de um personagem")
 @app_commands.describe(nome="Nome do personagem")
 async def listar_transformacoes(interaction, nome: str):
     data = load()
@@ -606,28 +738,23 @@ async def listar_transformacoes(interaction, nome: str):
     if not key:
         await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
         return
-    char = data[key]
-    transformacoes = char.get("transformacoes", {})
+    transformacoes = data[key].get("transformacoes", {})
     if not transformacoes:
         await interaction.response.send_message(f"**{key}** não tem transformações registradas.", ephemeral=True)
         return
-    embed = discord.Embed(title=f"✨ Transformações de {key}", color=0x4a7fff,
-                          description=f"*Todas calculadas sobre a base de {key}*")
+    embed = discord.Embed(title=f"✨ Transformações de {key}", color=0x4a7fff)
     for t in transformacoes.values():
-        hp_prev  = int(char["hp_base"]       * t["hp_mult"])
-        en_prev  = int(char["energia_base"]  * t["energia_mult"])
-        lba_prev = int(char["lba_base"]      * t["lba_mult"])
-        vel_prev = min(10, char["velocidade_base"] + t.get("vel_add", 0))
         embed.add_field(
             name=t["nome"],
-            value=(f"HP base→ `{hp_prev:,}` | Energia→ `{en_prev:,}` | "
-                   f"LBA→ `{lba_prev:,}` | Vel→ `{vel_prev}/10`\n"
-                   f"*(×`{t['hp_mult']}` HP | ×`{t['energia_mult']}` En | ×`{t['lba_mult']}` LBA | +`{t.get('vel_add',0)}` Vel)*"),
+            value=f"HP ×`{t['hp_mult']}` | Energia ×`{t['energia_mult']}` | LBA ×`{t['lba_mult']}` | Vel +`{t.get('vel_add', 0)}`",
             inline=False
         )
+    historico = data[key].get("historico_transformacoes", [])
+    if historico:
+        embed.add_field(name="Ativas agora", value=" → ".join(historico), inline=False)
     await interaction.response.send_message(embed=embed)
 
-@tree.command(name="deletar_transformacao", description="Remove uma transformação registrada")
+@tree.command(name="deletar_transformacao", description="Remove uma transformação registrada de um personagem")
 @app_commands.describe(nome="Nome do personagem", estado="Nome da transformação a deletar")
 async def deletar_transformacao(interaction, nome: str, estado: str):
     data = load()
@@ -640,18 +767,20 @@ async def deletar_transformacao(interaction, nome: str, estado: str):
     if t_key not in transformacoes:
         lista = ", ".join([f"`{v['nome']}`" for v in transformacoes.values()]) or "nenhuma"
         await interaction.response.send_message(
-            f"❌ **{estado}** não encontrada em **{key}**.\nRegistradas: {lista}", ephemeral=True)
+            f"❌ Transformação **{estado}** não encontrada em **{key}**.\nRegistradas: {lista}",
+            ephemeral=True
+        )
         return
     nome_real = transformacoes[t_key]["nome"]
     del data[key]["transformacoes"][t_key]
     save(data)
     await interaction.response.send_message(f"🗑️ Transformação **{nome_real}** removida de **{key}**.")
 
-# ════════════════════════════════
-# SISTEMA DE REIATSU
-# ════════════════════════════════
+# ════════════════════════════════════════════
+# REIATSU
+# ════════════════════════════════════════════
 
-@tree.command(name="comparar_reiatsu", description="Compara Reiatsu entre dois personagens — Controle, Reinos e Impacto")
+@tree.command(name="comparar_reiatsu", description="Compara o reiatsu de dois personagens (Controle, Reinos, Impacto)")
 @app_commands.describe(nome1="Primeiro personagem", nome2="Segundo personagem")
 async def comparar_reiatsu(interaction, nome1: str, nome2: str):
     data = load()
@@ -663,83 +792,83 @@ async def comparar_reiatsu(interaction, nome1: str, nome2: str):
 
     r1 = data[k1].get("reiatsu", 0)
     r2 = data[k2].get("reiatsu", 0)
-    diff = abs(r1 - r2)
-    mais_forte = k1 if r1 >= r2 else k2
-    mais_fraco = k2 if r1 >= r2 else k1
 
-    # Custo de controle de cada um contra o outro
-    custo_1v2 = controle_gasto(r1, r2)
-    custo_2v1 = controle_gasto(r2, r1)
+    controle, reino, impacto = analisar_reiatsu(r1, r2, k1, k2)
 
-    embed = discord.Embed(title="🔮 COMPARAÇÃO DE REIATSU", color=0xc8a020)
-    embed.add_field(name=k1, value=f"`{r1:,}` Reiatsu | Controle base: `{calcular_controle_base(r1)}`", inline=True)
-    embed.add_field(name=k2, value=f"`{r2:,}` Reiatsu | Controle base: `{calcular_controle_base(r2)}`", inline=True)
-    embed.add_field(name="Diferença", value=f"`{diff:,}`", inline=False)
-
-    embed.add_field(
-        name="🎯 CONTROLE",
-        value=(f"**{k1}** usando técnica de controle contra **{k2}**: gasta `{custo_1v2}` ponto(s)\n"
-               f"**{k2}** usando técnica de controle contra **{k1}**: gasta `{custo_2v1}` ponto(s)"),
-        inline=False
-    )
-    embed.add_field(
-        name="🌌 CONFLITO DE REINOS / DOMÍNIOS",
-        value=avaliar_conflito_reinos(r1, r2, k1, k2),
-        inline=False
-    )
-    embed.add_field(
-        name=f"💥 IMPACTO ({mais_forte} sobre {mais_fraco})",
-        value=avaliar_impacto_reiatsu(max(r1,r2), min(r1,r2), mais_forte, mais_fraco),
-        inline=False
-    )
+    embed = discord.Embed(title="🔥 COMPARAÇÃO DE REIATSU", color=0xff6600)
+    embed.add_field(name=k1, value=f"`{r1:,}` reiatsu", inline=True)
+    embed.add_field(name=k2, value=f"`{r2:,}` reiatsu", inline=True)
+    embed.add_field(name="Diferença", value=f"`{abs(r1 - r2):,}`", inline=True)
+    embed.add_field(name="\u200b", value=controle, inline=False)
+    embed.add_field(name="\u200b", value=reino, inline=False)
+    embed.add_field(name="\u200b", value=impacto, inline=False)
     await interaction.response.send_message(embed=embed)
 
-@tree.command(name="controle_gastar", description="Registra o uso de uma técnica de controle/manipulação")
+@tree.command(name="reiatsu_tabela", description="Exibe a tabela de reiatsu por tipo de ser")
+async def reiatsu_tabela(interaction):
+    embed = discord.Embed(title="📊 TABELA DE REIATSU", color=0xff6600,
+        description="Referência de valores fixos por categoria de ser.")
+    embed.add_field(name="10.000", value="Shinigamis sem domínio algum", inline=False)
+    embed.add_field(name="20.000", value="Qualquer demônio ou Glichborn básico", inline=False)
+    embed.add_field(name="30.000", value="Demônio/Glichborn de nível médio na hierarquia OU híbrido de 2 raças (Shinigami + uma das duas)", inline=False)
+    embed.add_field(name="40.000", value="A um grau do topo da hierarquia (demônios/Glichborns) OU híbrido de 3 raças", inline=False)
+    embed.add_field(name="50.000", value="Arrankars OU híbridos de 4 raças", inline=False)
+    embed.add_field(name="60.000", value="Vasto Lordes (como Tamsy) OU Shinigami híbrido de Vasto Lorde + outras raças", inline=False)
+    embed.add_field(name="70.000", value="Categoria anterior + Shikai dominado", inline=False)
+    embed.add_field(name="80.000", value="Categoria anterior + Bankai", inline=False)
+    embed.add_field(name="90.000 – 100.000", value="Seres no auge absoluto (Xay, Kyoga, Namegog, etc.) — presença passiva já pode matar", inline=False)
+    await interaction.response.send_message(embed=embed)
+
+# ════════════════════════════════════════════
+# CONTROLE
+# ════════════════════════════════════════════
+
+@tree.command(name="controle_gastar", description="Gasta pontos de controle ao usar técnica de manipulação/corpo")
 @app_commands.describe(
-    nome="Quem está usando a técnica",
-    alvo="Alvo da técnica de controle"
+    nome="Nome do personagem",
+    pontos="Quantidade de pontos a gastar (padrão: 1)",
+    oponente="(Opcional) Nome do oponente para verificar diferença de reiatsu"
 )
-async def controle_gastar(interaction, nome: str, alvo: str):
+async def controle_gastar(interaction, nome: str, pontos: app_commands.Range[int, 1, 5] = 1, oponente: str = None):
     data = load()
-    key   = get_key(data, nome)
-    key_a = get_key(data, alvo)
+    key = get_key(data, nome)
     if not key:
         await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
         return
-    if not key_a:
-        await interaction.response.send_message(f"❌ **{alvo}** não encontrado.", ephemeral=True)
-        return
+    char = data[key]
+    controle_atual = char.get("controle", 3)
 
-    char   = data[key]
-    char_a = data[key_a]
-    r_atacante = char.get("reiatsu", 0)
-    r_alvo     = char_a.get("reiatsu", 0)
-    custo      = controle_gasto(r_atacante, r_alvo)
-    antes      = char.get("controle", 3)
+    custo_extra = 0
+    aviso_reiatsu = ""
 
-    if antes <= 0:
-        await interaction.response.send_message(
-            f"🔴 **{key}** está com controle negativo (`{antes}`). Técnicas de controle **falham automaticamente**.",
-            embed=status_embed(key, char)
-        )
-        return
+    if oponente:
+        k2 = get_key(data, oponente)
+        if k2:
+            r1 = char.get("reiatsu", 0)
+            r2 = data[k2].get("reiatsu", 0)
+            diff = r2 - r1  # positivo = oponente é mais forte
+            if diff >= 30000:
+                await interaction.response.send_message(
+                    f"❌ **{key}** não pode controlar **{k2}** — diferença de reiatsu extrema (`{diff:,}`). Técnica **falha automaticamente**.",
+                    ephemeral=True
+                )
+                return
+            elif diff >= 20000:
+                custo_extra = 1
+                aviso_reiatsu = f"\n⚠️ Reiatsu inferior em `{diff:,}` — custo +1 ponto extra."
 
-    char["controle"] = antes - custo
+    custo_total = pontos + custo_extra
+    antes = controle_atual
+    char["controle"] = controle_atual - custo_total
     save(data)
 
-    if custo == 0:
-        msg = (f"🟢 **{key}** usou técnica de controle contra **{key_a}**.\n"
-               f"Diferença de Reiatsu é grande — **não gastou pontos de controle**.\n`Controle: {antes} → {char['controle']}`")
-    else:
-        msg = (f"🎯 **{key}** usou técnica de controle contra **{key_a}** "
-               f"(custou `{custo}` ponto(s)).\n`Controle: {antes} → {char['controle']}`")
+    msg = f"🔒 **{key}** gastou `{custo_total}` ponto(s) de controle.\n`Controle: {antes} → {char['controle']}`{aviso_reiatsu}"
     if char["controle"] <= 0:
-        msg += f"\n🔴 **{key}** chegou a controle negativo! Próximas técnicas de controle falham."
-
+        msg += f"\n🔴 **CONTROLE NEGATIVO — TÉCNICAS DE CONTROLE FALHAM!**"
     await interaction.response.send_message(msg, embed=status_embed(key, char))
 
 @tree.command(name="controle_set", description="Define manualmente os pontos de controle de um personagem")
-@app_commands.describe(nome="Nome do personagem", valor="Novo valor de controle (pode ser negativo)")
+@app_commands.describe(nome="Nome do personagem", valor="Novo valor de controle")
 async def controle_set(interaction, nome: str, valor: int):
     data = load()
     key = get_key(data, nome)
@@ -749,150 +878,161 @@ async def controle_set(interaction, nome: str, valor: int):
     data[key]["controle"] = valor
     save(data)
     await interaction.response.send_message(
-        f"🔮 **{key}** controle → `{valor}`",
+        f"🔒 **{key}** controle → `{valor}`",
         embed=status_embed(key, data[key])
     )
 
-# ════════════════════════════════
+# ════════════════════════════════════════════
 # HADO DE APOSTA
-# ════════════════════════════════
+# ════════════════════════════════════════════
 
-@tree.command(name="hado_aposta", description="Declara o Hado de Aposta — ambos ficam sem energia, inicia conflito de ringue")
+@tree.command(name="hado_aposta", description="Declara o Hado de Aposta — zera energia de ambos e inicia conflito de ringue")
 @app_commands.describe(
-    declarante="Quem está declarando o Hado de Aposta",
-    oponente="Oponente que entra no ringue"
+    declarante="Quem declara o Hado de Aposta",
+    alvo="Quem recebe o Hado de Aposta"
 )
-async def hado_aposta(interaction, declarante: str, oponente: str):
+async def hado_aposta(interaction, declarante: str, alvo: str):
     data = load()
     k1 = get_key(data, declarante)
-    k2 = get_key(data, oponente)
-    if not k1:
-        await interaction.response.send_message(f"❌ **{declarante}** não encontrado.", ephemeral=True)
-        return
-    if not k2:
-        await interaction.response.send_message(f"❌ **{oponente}** não encontrado.", ephemeral=True)
+    k2 = get_key(data, alvo)
+    if not k1 or not k2:
+        await interaction.response.send_message("❌ Um dos personagens não foi encontrado.", ephemeral=True)
         return
 
-    c1 = data[k1]
-    c2 = data[k2]
+    char1 = data[k1]
+    char2 = data[k2]
 
-    en1_antes = c1["energia"]
-    en2_antes = c2["energia"]
+    # Guarda energia atual para restaurar depois
+    char1["energia_pre_aposta"] = char1.get("energia", 0)
+    char2["energia_pre_aposta"] = char2.get("energia", 0)
 
-    c1["energia"] = 0
-    c2["energia"] = 0
+    # Zera energia de ambos
+    char1["energia"] = 0
+    char2["energia"] = 0
 
     save(data)
 
     embed = discord.Embed(
-        title="⚡ HADO DE APOSTA DECLARADO",
+        title="⚔️ HADO DE APOSTA DECLARADO",
         description=(
-            f"**{k1}** declarou o Hado de Aposta contra **{k2}**.\n"
-            f"Esta é uma declaração unilateral — **não pode ser recusada.**"
+            f"**{k1}** lançou o **Hado de Aposta** contra **{k2}**!\n\n"
+            f"A energia amaldiçoada de ambos foi selada.\n"
+            f"O conflito de ringue começa agora — **apenas artes marciais**.\n"
+            f"Sem técnicas, sem transformações adicionais.\n\n"
+            f"Quando o ringue terminar, use `/hado_resultado` para registrar o vencedor."
         ),
-        color=0xe03060
+        color=0xff0000
     )
+    embed.add_field(name=k1, value=f"Energia selada: `{char1['energia_pre_aposta']:,}`\nControle: `{char1.get('controle', 3)}`", inline=True)
+    embed.add_field(name=k2, value=f"Energia selada: `{char2['energia_pre_aposta']:,}`\nControle: `{char2.get('controle', 3)}`", inline=True)
     embed.add_field(
-        name="ENERGIA",
-        value=(f"**{k1}**: `{en1_antes:,}` → `0` ☠️\n"
-               f"**{k2}**: `{en2_antes:,}` → `0` ☠️"),
-        inline=False
-    )
-    embed.add_field(
-        name="REGRAS DO RINGUE",
+        name="Regras do Ringue",
         value=(
-            "• Apenas artes marciais — nenhuma técnica especial permitida\n"
-            "• Avaliado por IA com critérios objetivos: golpes acertados, qualidade, faltas\n"
-            "• Mestre pode opinar mas não decide sozinho\n"
-            "• Energia de ambos volta ao normal quando o ringue termina"
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name="RESULTADO (use /hado_resultado após o ringue)",
-        value=(
-            f"**Vencedor**: recupera 3 pontos de controle\n"
-            f"**Perdedor**: perde 1 ponto de controle (pode negativar)"
+            "• Avaliado objetivamente por número de golpes e qualidade\n"
+            "• Vencedor: recupera `3` pontos de controle\n"
+            "• Perdedor: perde `1` ponto de controle (pode negativar)\n"
+            "• Energia restaurada ao fim do ringue"
         ),
         inline=False
     )
     await interaction.response.send_message(embed=embed)
 
-@tree.command(name="hado_resultado", description="Aplica o resultado do Hado de Aposta e restaura a energia dos dois")
+@tree.command(name="hado_resultado", description="Registra o resultado do Hado de Aposta e aplica pontos de controle")
 @app_commands.describe(
     vencedor="Nome do vencedor do ringue",
-    perdedor="Nome do perdedor do ringue",
-    energia_vencedor="Energia que o vencedor tinha antes do Hado",
-    energia_perdedor="Energia que o perdedor tinha antes do Hado"
+    perdedor="Nome do perdedor do ringue"
 )
-async def hado_resultado(interaction, vencedor: str, perdedor: str,
-                          energia_vencedor: int, energia_perdedor: int):
+async def hado_resultado(interaction, vencedor: str, perdedor: str):
     data = load()
     kv = get_key(data, vencedor)
     kp = get_key(data, perdedor)
-    if not kv:
-        await interaction.response.send_message(f"❌ **{vencedor}** não encontrado.", ephemeral=True)
-        return
-    if not kp:
-        await interaction.response.send_message(f"❌ **{perdedor}** não encontrado.", ephemeral=True)
+    if not kv or not kp:
+        await interaction.response.send_message("❌ Um dos personagens não foi encontrado.", ephemeral=True)
         return
 
-    cv = data[kv]
-    cp = data[kp]
+    char_v = data[kv]
+    char_p = data[kp]
 
     # Restaura energia
-    cv["energia"] = min(cv["energia_max"], energia_vencedor)
-    cp["energia"] = min(cp["energia_max"], energia_perdedor)
+    char_v["energia"] = char_v.pop("energia_pre_aposta", char_v.get("energia_max", 0))
+    char_p["energia"] = char_p.pop("energia_pre_aposta", char_p.get("energia_max", 0))
 
-    # Controle do vencedor
-    ctrl_v_antes = cv.get("controle", 3)
-    ctrl_v_novo  = recuperar_controle_apos_aposta(ctrl_v_antes, ganhou=True)
-    cv["controle"] = ctrl_v_novo
+    # Vencedor: +3 controle (com cap no base)
+    ctrl_base_v = char_v.get("controle_base", 3)
+    ctrl_v_antes = char_v.get("controle", 3)
+    ctrl_neg = ctrl_v_antes  # antes era negativo?
 
-    # Controle do perdedor
-    ctrl_p_antes = cp.get("controle", 3)
-    ctrl_p_novo  = recuperar_controle_apos_aposta(ctrl_p_antes, ganhou=False)
-    cp["controle"] = ctrl_p_novo
+    if ctrl_neg < 0:
+        # Em negativo: recupera menos dependendo do quão negativo está
+        if ctrl_neg <= -3:
+            recupera = 0
+        elif ctrl_neg == -2:
+            recupera = 1
+        elif ctrl_neg == -1:
+            recupera = 2
+        else:
+            recupera = 3
+        char_v["controle"] = ctrl_neg + recupera
+    else:
+        char_v["controle"] = min(ctrl_base_v, ctrl_v_antes + 3)
+
+    # Perdedor: -1 controle
+    ctrl_p_antes = char_p.get("controle", 3)
+    char_p["controle"] = ctrl_p_antes - 1
 
     save(data)
 
-    embed = discord.Embed(title="🏆 RESULTADO DO HADO DE APOSTA", color=0xc8a020)
+    embed = discord.Embed(
+        title="🏆 RESULTADO DO HADO DE APOSTA",
+        color=0x00ff88
+    )
     embed.add_field(
         name=f"🏆 {kv} — VENCEDOR",
-        value=(f"Controle: `{ctrl_v_antes}` → `{ctrl_v_novo}` (+recuperação)\n"
-               f"Energia restaurada: `{cv['energia']:,}`"),
-        inline=True
+        value=(
+            f"Energia restaurada: `{char_v['energia']:,}`\n"
+            f"Controle: `{ctrl_v_antes}` → `{char_v['controle']}`"
+            + (f" (recuperou `{char_v['controle'] - ctrl_v_antes}`)" if char_v['controle'] > ctrl_v_antes else "")
+        ),
+        inline=False
     )
     embed.add_field(
         name=f"💀 {kp} — PERDEDOR",
-        value=(f"Controle: `{ctrl_p_antes}` → `{ctrl_p_novo}` (-1)\n"
-               f"Energia restaurada: `{cp['energia']:,}`"),
-        inline=True
+        value=(
+            f"Energia restaurada: `{char_p['energia']:,}`\n"
+            f"Controle: `{ctrl_p_antes}` → `{char_p['controle']}`"
+            + (f"\n🔴 **CONTROLE NEGATIVO!**" if char_p['controle'] <= 0 else "")
+        ),
+        inline=False
     )
 
-    alertas = []
-    if ctrl_p_novo <= 0:
-        alertas.append(f"🔴 **{kp}** está com controle negativo (`{ctrl_p_novo}`). "
-                       f"Técnicas de controle falham. "
-                       f"Recuperação no próximo Hado ganho: "
-                       f"`{'2' if ctrl_p_novo == -1 else '1' if ctrl_p_novo == -2 else '0'}`")
-    if alertas:
-        embed.add_field(name="ALERTAS", value="\n".join(alertas), inline=False)
+    if char_p["controle"] < 0:
+        neg = char_p["controle"]
+        if neg <= -3:
+            prox = "0 pontos"
+        elif neg == -2:
+            prox = "1 ponto"
+        elif neg == -1:
+            prox = "2 pontos"
+        embed.add_field(
+            name="⚠️ Penalidade de controle negativo",
+            value=(
+                f"**{kp}** está em `{neg}` de controle.\n"
+                f"Técnicas de controle **falham automaticamente**.\n"
+                f"Se ganhar o próximo Hado de Aposta, recupera **{prox}** de controle."
+            ),
+            inline=False
+        )
 
-    await interaction.response.send_message(
-        embed=embed
-    )
-    await interaction.followup.send(embed=status_embed(kv, cv))
-    await interaction.followup.send(embed=status_embed(kp, cp))
+    await interaction.response.send_message(embed=embed)
 
-# ════════════════════════════════
-# STATS ESPECIAIS E ADMINISTRAÇÃO
-# ════════════════════════════════
+# ════════════════════════════════════════════
+# STATS ESPECIAIS
+# ════════════════════════════════════════════
 
 @tree.command(name="extra_set", description="Define um stat especial do personagem (ex: Queimadura, Corda)")
 @app_commands.describe(
     nome="Nome do personagem",
-    campo="Nome do stat especial",
+    campo="Nome do stat especial (ex: Queimadura)",
     valor="Valor do stat (ex: 50%)"
 )
 async def extra_set(interaction, nome: str, campo: str, valor: str):
@@ -910,7 +1050,7 @@ async def extra_set(interaction, nome: str, campo: str, valor: str):
         embed=status_embed(key, data[key])
     )
 
-@tree.command(name="extra_remover", description="Remove um stat especial de um personagem")
+@tree.command(name="extra_remover", description="Remove um stat especial do personagem")
 @app_commands.describe(nome="Nome do personagem", campo="Nome do stat a remover")
 async def extra_remover(interaction, nome: str, campo: str):
     data = load()
@@ -920,98 +1060,67 @@ async def extra_remover(interaction, nome: str, campo: str):
         return
     extras = data[key].get("extras", {})
     if campo not in extras:
-        await interaction.response.send_message(f"❌ Stat `{campo}` não encontrado em **{key}**.", ephemeral=True)
+        await interaction.response.send_message(f"❌ Stat **{campo}** não encontrado em **{key}**.", ephemeral=True)
         return
     del data[key]["extras"][campo]
     save(data)
-    await interaction.response.send_message(f"🗑️ Stat `{campo}` removido de **{key}**.")
-
-@tree.command(name="resetar", description="Reseta todos os stats de um personagem para o máximo base")
-@app_commands.describe(nome="Nome do personagem")
-async def resetar(interaction, nome: str):
-    data = load()
-    key = get_key(data, nome)
-    if not key:
-        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
-        return
-    char = data[key]
-    char["hp"]        = char["hp_base"]
-    char["hp_max"]    = char["hp_base"]
-    char["energia"]   = char["energia_base"]
-    char["energia_max"]= char["energia_base"]
-    char["lba"]       = char["lba_base"]
-    char["velocidade"]= char["velocidade_base"]
-    char["evasivas"]  = 5
-    char["controle"]  = char.get("controle_base", 3)
-    char["estado"]    = "Base"
-    save(data)
     await interaction.response.send_message(
-        f"♻️ **{key}** totalmente resetado para o estado base.",
-        embed=status_embed(key, char)
+        f"🗑️ **{campo}** removido de **{key}**.",
+        embed=status_embed(key, data[key])
     )
 
-@tree.command(name="deletar", description="Remove um personagem do sistema")
-@app_commands.describe(nome="Nome do personagem")
-async def deletar(interaction, nome: str):
-    data = load()
-    key = get_key(data, nome)
-    if not key:
-        await interaction.response.send_message(f"❌ **{nome}** não encontrado.", ephemeral=True)
-        return
-    del data[key]
-    save(data)
-    await interaction.response.send_message(f"🗑️ **{key}** removido do sistema.")
-
-# ════════════════════════════════
+# ════════════════════════════════════════════
 # AJUDA
-# ════════════════════════════════
+# ════════════════════════════════════════════
 
 @tree.command(name="ajuda", description="Lista todos os comandos disponíveis")
 async def ajuda(interaction):
-    embed = discord.Embed(title="◈ FINAL DO VOID — BOT DE COMBATE", color=0xc8a020)
-    embed.add_field(name="📋 PERSONAGENS", value=(
+    embed = discord.Embed(title="◈ FINAL DO VOID — BOT DE COMBATE v7", color=0x4a7fff)
+    embed.add_field(name="📋 PERSONAGENS", value=
         "`/registrar` — cria personagem\n"
         "`/status [nome]` — status atual\n"
         "`/todos` — todos os personagens\n"
-        "`/resetar [nome]` — reset total para a base\n"
-        "`/deletar [nome]` — remove personagem"
-    ), inline=False)
-    embed.add_field(name="⚔️ COMBATE", value=(
+        "`/resetar [nome]` — reseta HP e energia pro máximo atual\n"
+        "`/deletar [nome]` — remove personagem",
+        inline=False)
+    embed.add_field(name="⚔️ COMBATE", value=
         "`/dano [nome] [valor]` — aplica dano no HP\n"
         "`/curar [nome] [valor]` — cura HP\n"
-        "`/gastar [nome] [valor]` — gasta energia\n"
+        "`/gastar [nome] [valor]` — gasta energia amaldiçoada\n"
         "`/recuperar [nome] [valor]` — recupera energia\n"
         "`/velocidade [nome] [1-10]` — altera velocidade\n"
-        "`/lba [nome] [valor]` — altera LBA"
-    ), inline=False)
-    embed.add_field(name="💨 EVASIVAS", value=(
+        "`/lba [nome] [valor]` — altera LBA",
+        inline=False)
+    embed.add_field(name="💨 EVASIVAS", value=
         "`/evasiva_usar [nome] [qtd]` — gasta evasivas\n"
-        "`/evasiva_recuperar [nome]` — recupera base (5)\n"
-        "`/evasiva_recuperar [nome] [oponente]` — recupera com bônus de velocidade\n"
-        "`/comparar_velocidade [nome1] [nome2]` — compara velocidade e evasivas"
-    ), inline=False)
-    embed.add_field(name="✨ TRANSFORMAÇÕES", value=(
-        "`/registrar_transformacao` — cadastra transformação *(sobre a base, nunca empilha)*\n"
-        "`/transformar [nome] [estado]` — aplica transformação\n"
-        "`/transformar [nome] base` — reverte para base\n"
-        "`/listar_transformacoes [nome]` — lista todas\n"
-        "`/deletar_transformacao [nome] [estado]` — remove transformação"
-    ), inline=False)
-    embed.add_field(name="🔮 REIATSU", value=(
+        "`/evasiva_recuperar [nome]` — recupera (base 5)\n"
+        "`/evasiva_recuperar [nome] [oponente]` — recupera com bônus de vel.\n"
+        "`/comparar_velocidade [nome1] [nome2]` — compara vel. e evasivas",
+        inline=False)
+    embed.add_field(name="✨ TRANSFORMAÇÕES", value=
+        "`/registrar_transformacao` — cadastra transformação\n"
+        "`/transformar [nome] [estado]` — aplica transformação (empilhável)\n"
+        "`/reverter [nome]` — desfaz a ÚLTIMA transformação\n"
+        "`/base [nome]` — volta TUDO para o estado base\n"
+        "`/listar_transformacoes [nome]` — lista transformações\n"
+        "`/deletar_transformacao [nome] [estado]` — remove transformação",
+        inline=False)
+    embed.add_field(name="🔥 REIATSU", value=
         "`/comparar_reiatsu [nome1] [nome2]` — Controle, Reinos e Impacto\n"
-        "`/controle_gastar [nome] [alvo]` — usa técnica de controle (desconta pontos)\n"
-        "`/controle_set [nome] [valor]` — define controle manualmente"
-    ), inline=False)
-    embed.add_field(name="⚡ HADO DE APOSTA", value=(
-        "`/hado_aposta [declarante] [oponente]` — declara o Hado (ambos ficam sem energia)\n"
-        "`/hado_resultado [vencedor] [perdedor] [en_v] [en_p]` — aplica resultado e restaura energia"
-    ), inline=False)
-    embed.add_field(name="📌 STATS ESPECIAIS", value=(
+        "`/reiatsu_tabela` — tabela de reiatsu por tipo de ser",
+        inline=False)
+    embed.add_field(name="🔒 CONTROLE", value=
+        "`/controle_gastar [nome] [pontos] [oponente?]` — gasta controle\n"
+        "`/controle_set [nome] [valor]` — define controle manualmente",
+        inline=False)
+    embed.add_field(name="⚡ HADO DE APOSTA", value=
+        "`/hado_aposta [declarante] [alvo]` — declara o Hado (zera energia)\n"
+        "`/hado_resultado [vencedor] [perdedor]` — finaliza ringue e redistribui controle",
+        inline=False)
+    embed.add_field(name="📌 STATS ESPECIAIS", value=
         "`/extra_set [nome] [campo] [valor]` — define stat único\n"
-        "`/extra_remover [nome] [campo]` — remove stat único"
-    ), inline=False)
+        "`/extra_remover [nome] [campo]` — remove stat único",
+        inline=False)
     await interaction.response.send_message(embed=embed)
 
 bot.run(TOKEN)
-PYEOF
-echo "Feito — $(wc -l < /home/claude/bot.py) linhas"
