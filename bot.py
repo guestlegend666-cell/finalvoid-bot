@@ -222,6 +222,65 @@ async def sync_cmd(interaction: discord.Interaction):
         ephemeral=True
     )
 
+@tree.command(name="limpar_comandos", description="[ADMIN] Apaga TODOS os comandos registrados (global + todas as guilds) para resolver duplicatas")
+async def limpar_comandos(interaction: discord.Interaction):
+    """
+    Nuke completo: limpa comandos globais e de cada guild onde o bot está.
+    Usar quando há comandos duplicados no Discord por conta de deploys antigos.
+    Após usar isso, rode /registrar_comandos para recolocar tudo.
+    """
+    await interaction.response.defer(ephemeral=True)
+
+    log = []
+
+    # 1. Limpa comandos globais
+    tree.clear_commands(guild=None)
+    await tree.sync(guild=None)
+    log.append("✅ Comandos **globais** limpos.")
+
+    # 2. Limpa comandos de cada guild onde o bot está
+    guilds_limpas = 0
+    for guild in bot.guilds:
+        try:
+            tree.clear_commands(guild=guild)
+            await tree.sync(guild=guild)
+            guilds_limpas += 1
+        except Exception as e:
+            log.append(f"⚠️ Erro na guild `{guild.name}`: {e}")
+
+    log.append(f"✅ Comandos limpos em **{guilds_limpas}** servidor(es).")
+    log.append("")
+    log.append("⚠️ **Agora use `/registrar_comandos` para recolocar todos os comandos.**")
+    log.append("_(pode demorar até 1 minuto para o Discord atualizar)_")
+
+    await interaction.followup.send("\n".join(log), ephemeral=True)
+
+@tree.command(name="registrar_comandos", description="[ADMIN] Recoloca todos os comandos do bot após uma limpeza")
+async def registrar_comandos(interaction: discord.Interaction):
+    """
+    Depois de /limpar_comandos, usa isso para re-sincronizar tudo globalmente.
+    O bot volta ao normal sem duplicatas.
+    """
+    await interaction.response.defer(ephemeral=True)
+
+    # Sincroniza globalmente (fonte da verdade)
+    synced_global = await tree.sync()
+
+    # Sincroniza também na guild atual para aparecer imediatamente
+    guild = interaction.guild
+    msg_guild = ""
+    if guild:
+        tree.copy_global_to(guild=guild)
+        synced_guild = await tree.sync(guild=guild)
+        msg_guild = f"\n✅ Sincronizados **{len(synced_guild)}** comandos neste servidor (instantâneo)."
+
+    await interaction.followup.send(
+        f"✅ Registrados **{len(synced_global)}** comandos globalmente.{msg_guild}\n"
+        f"_(comandos globais podem demorar até 1h para aparecer em outros servidores — "
+        f"neste servidor já estão disponíveis)_",
+        ephemeral=True
+    )
+
 # ════════════════════════════════════════════
 # PERSONAGENS
 # ════════════════════════════════════════════
